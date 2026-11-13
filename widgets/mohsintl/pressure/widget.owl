@@ -5,8 +5,8 @@ widget "pressure" {
   minSize: 2x3
 
   meta {
-    description: "How much room this phone really has left, from the kernel: available RAM over the last two minutes, swap, reclaimable cache, and the biggest process. Tap for the top ten and a stop button."
-    version: "1.1"
+    description: "How much room this phone really has left, from the kernel: available RAM over the last ten minutes, swap, reclaimable cache, and the biggest process. Tap for the top ten and a stop button."
+    version: "1.2"
     license: "MIT"
     category: "system"
     owl: 21
@@ -16,10 +16,12 @@ widget "pressure" {
 
   // The whole phone's memory, as its own kernel counts it, in kB:
   // MemTotal MemAvailable SwapTotal SwapFree AnonPages Cached SReclaimable Slab.
-  source k = cmd("awk '/^MemTotal:/{t=$2} /^MemAvailable:/{a=$2} /^SwapTotal:/{st=$2} /^SwapFree:/{sf=$2} /^AnonPages:/{an=$2} /^Cached:/{c=$2} /^SReclaimable:/{sr=$2} /^Slab:/{s=$2} END{print t, a, st, sf, an, c, sr, s}' /proc/meminfo") every 2s
+  // Every 30 s, not every 2: a shell spawn is the expensive part of this widget on a phone, and
+  // free memory moves in minutes, not in seconds.
+  source k = cmd("awk '/^MemTotal:/{t=$2} /^MemAvailable:/{a=$2} /^SwapTotal:/{st=$2} /^SwapFree:/{sf=$2} /^AnonPages:/{an=$2} /^Cached:/{c=$2} /^SReclaimable:/{sr=$2} /^Slab:/{s=$2} END{print t, a, st, sf, an, c, sr, s}' /proc/meminfo") every 30s
 
   // pid, RSS in kB, name, biggest first. Only this Linux system's own processes are here.
-  source top = cmd("ps -eo pid=,rss=,comm= --sort=-rss | head -10") every 15s
+  source top = cmd("ps -eo pid=,rss=,comm= --sort=-rss | head -10") every 2m
 
   // Free and total blocks and the block size; df walks the f2fs mount and can stall.
   source disk = cmd("stat -f -c '%a %b %S' /") every 10m
@@ -43,8 +45,8 @@ widget "pressure" {
   let ready = total > 0
   let pct = ready ? avail / total * 100 : null
   let swapPct = swapTotal > 0 ? swapUsed / swapTotal * 100 : 0
-  // Two minutes at 2 s a sample.
-  let h = history(pct, 60)
+  // Ten minutes at 30 s a sample.
+  let h = history(pct, 20)
   let hs = h.filter(x => x != null)
 
   // The colour of the moment: the number and the trace go red when the phone
@@ -130,7 +132,7 @@ widget "pressure" {
       }
     }
 
-    // ---- two minutes of it, drawn to a scale of 0 to 100% left
+    // ---- ten minutes of it, drawn to a scale of 0 to 100% left
     Box {
       weight: 1
       align: bottom
@@ -160,7 +162,7 @@ widget "pressure" {
         }
 
         if (pct == null || pct < 65) {
-          text("2 min", 0, 6, size: 8, color: muted)
+          text("10 min", 0, 6, size: 8, color: muted)
           if (len(hs) >= 2) {
             text("low ${fmtBytes(min(hs) / 100 * total)}", width, 6, size: 8, color: muted, align: end)
           }
@@ -219,7 +221,7 @@ widget "pressure" {
         }
       }
 
-      // ---- the same two minutes, bigger, with the scale down the side
+      // ---- the same ten minutes, bigger, with the scale down the side
       Row {
         gap: 8
         align: top
@@ -266,7 +268,7 @@ widget "pressure" {
       Row {
         gap: 10
         align: center
-        Text { text: "two minutes, a sample every 2 s"; style: muted; fontSize: 9; weight: 1 }
+        Text { text: "10 min · 30 s samples"; style: muted; fontSize: 9; weight: 1 }
         if (len(hs) >= 2) {
           Text {
             text: "low ${fmtBytes(min(hs) / 100 * total)} · high ${fmtBytes(max(hs) / 100 * total)}"
