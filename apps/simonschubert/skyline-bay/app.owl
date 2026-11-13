@@ -1,5 +1,5 @@
 app "skyline bay" {
-  meta { owl: 22; description: "A 3D island city builder: lay roads, zone homes, shops and industry, bring power and water, add services and parks, and grow a hamlet into a skyline"; version: "1.0"; license: "MIT"; category: "games" }
+  meta { owl: 22; description: "A 3D island city builder: lay roads, zone homes, shops and industry, bring power and water, add services and parks, and grow a hamlet into a skyline"; version: "1.1"; license: "MIT"; category: "games" }
   // How it works. The island is 22 x 22 tiles, kept in two persisted lists: g (what's on a tile) and lv (how far a
   // zoned lot has grown, 0 to 3). Every 2 seconds a tick settles the cash, and lots with demand for their zone grow a
   // level if what they need is there: a road that reaches the highway, power, water (from level 2), land value
@@ -141,6 +141,8 @@ app "skyline bay" {
   state payAt = 0 persist
   state rw = 0 persist
   state saves = [] persist
+  // when the city's weather started going round (clock, 0 not yet): its first clouds wait GRACE seconds and then a sunny spell
+  state wx0 = 0 persist
   state yaw = 35 persist
   state zoom = 30 persist
   state tx = -6 persist
@@ -334,12 +336,15 @@ app "skyline bay" {
   let HAS = range(len(TECH)).map(i => any(tech, t => t == i))
   // the sun over a day of 4 minutes: up at about 5:00, down at about 19:00, highest at noon
   let DAY = 240
-  let DPH = ((now ?? 0) % DAY) / DAY
+  let GRACE = 120
+  let DPH = (max(0, (now ?? 0) - wx0 - GRACE) % DAY) / DAY
   // The weather goes round every 4 minutes: sunny (108 s), partly cloudy (24 s), cloudy (72 s), partly cloudy (36 s).
   // WX0 is which, 0 to 2; SUNV how much sun gets through; DIMV how much the light dims, eased over a few seconds
   // either side of a change.
-  // A new city's first minutes stay sunny: clouds come once the quests reach the battery (or one is built).
-  let CALM = qi < 4 && KC[21] == 0
+  // A new city's first minutes stay sunny: the weather starts going round once the quests reach the battery (or one
+  // is built), and then only after two more sunny minutes and a sunny spell, so the first battery fills before clouds.
+  let CALM0 = qi < 4 && KC[21] == 0
+  let CALM = CALM0 || wx0 == 0 || (now ?? 0) < wx0 + GRACE
   let WX0 = CALM || DPH < DF.wx[0] ? 0 : DPH < DF.wx[1] || DPH >= DF.wx[2] ? 1 : 2
   let SUNV = [1, 0.55, 0.1][WX0]
   let WEATHER = ["SUNNY", "PARTLY CLOUDY", "CLOUDY"][WX0]
@@ -1021,6 +1026,7 @@ app "skyline bay" {
       batt = clamp(batt + (SOLNOW - PUSE) * clamp(now - since, 0, 10), 0, BCAP)
       bank = coins
       since = now
+      if wx0 == 0 && !CALM0 { wx0 = now }
       if POP > best { best = POP }
       let up = shuffle(CND[0]).take(DR > 0.05 ? ceil(DR * 1.2) : 0) + shuffle(CND[1]).take(DC > 0.05 ? ceil(DC * 1.0) : 0) + shuffle(CND[2]).take(DI > 0.05 ? ceil(DI * 1.0) : 0)
       let dn = shuffle(DECL).take(1)
@@ -1974,7 +1980,7 @@ app "skyline bay" {
                   weight: 1
                   onTap: {
                     let nx = sv
-                    saves = set(saves, i, {m: mapk, g: g, lv: lv, bank: coins, since: tnow, best: best, seen: seen, qi: qi, tax: tax, yaw: yaw, zoom: zoom, tx: tx, tz: tz, pop: POP, cl: CL, batt: batt, tech: tech, rk: rk, rEnd: rEnd, nl: nl, lastL: lastL, sub: SUBL, stops: BSTOPS, mapv: mapv, own: OWNL})
+                    saves = set(saves, i, {m: mapk, g: g, lv: lv, bank: coins, since: tnow, best: best, seen: seen, qi: qi, tax: tax, yaw: yaw, zoom: zoom, tx: tx, tz: tz, pop: POP, cl: CL, batt: batt, tech: tech, rk: rk, rEnd: rEnd, nl: nl, lastL: lastL, wx0: wx0, sub: SUBL, stops: BSTOPS, mapv: mapv, own: OWNL})
                     mapk = nx.m
                     g = nx.g
                     lv = nx.lv
@@ -1994,6 +2000,7 @@ app "skyline bay" {
                     rEnd = nx.rEnd ?? 0
                     nl = nx.nl ?? 0
                     lastL = nx.lastL ?? 0
+                    wx0 = nx.wx0 ?? 0
                     sub = nx.sub ?? []
                     stops = nx.stops ?? []
                     mapv = nx.mapv ?? 0
@@ -2069,7 +2076,7 @@ app "skyline bay" {
                         msg = "DELETE A CITY FIRST"
                         msgT = now
                       } else {
-                        saves = saves + [{m: mapk, g: g, lv: lv, bank: coins, since: tnow, best: best, seen: seen, qi: qi, tax: tax, yaw: yaw, zoom: zoom, tx: tx, tz: tz, pop: POP, cl: CL, batt: batt, tech: tech, rk: rk, rEnd: rEnd, nl: nl, lastL: lastL, sub: SUBL, stops: BSTOPS, mapv: mapv, own: OWNL}]
+                        saves = saves + [{m: mapk, g: g, lv: lv, bank: coins, since: tnow, best: best, seen: seen, qi: qi, tax: tax, yaw: yaw, zoom: zoom, tx: tx, tz: tz, pop: POP, cl: CL, batt: batt, tech: tech, rk: rk, rEnd: rEnd, nl: nl, lastL: lastL, wx0: wx0, sub: SUBL, stops: BSTOPS, mapv: mapv, own: OWNL}]
                         mapk = k
                         mapv = 2
                         own = []
@@ -2091,6 +2098,7 @@ app "skyline bay" {
                         rEnd = 0
                         nl = 0
                         lastL = 0
+                        wx0 = 0
                         sub = []
                         stops = []
                         sel = -1
