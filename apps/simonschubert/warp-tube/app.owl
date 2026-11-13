@@ -7,23 +7,29 @@ app "warp tube" {
   // wall (`pa`) only changes in a drag: from those follows the moment it next hits a gate
   // (`dieAt`), so a frame only has to draw. The tube and the gates are drawn by a shader, per
   // pixel on the GPU; only the ship and the words are drawing calls.
+  //
+  // It draws frames only while a run is awake: `time` is read behind `awake`, so the title and the
+  // run that ended are still pictures, and the launcher parks the frame clock. A tile nobody is
+  // playing costs no frames at all, in the drawer or left open.
 
-  meta { owl: 14; description: "A wireframe tunnel racer in your theme's colors: roll around a bending neon tube and fly through the gaps in the gates"; version: "1.0"; license: "MIT"; category: "games" }
+  meta { owl: 14; description: "A wireframe tunnel racer in your theme's colors: roll around a bending neon tube and fly through the gaps in the gates"; version: "1.1"; license: "MIT"; category: "games" }
 
   title: ""
   statusBar: false
   edge: true
   icon: """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="3" stroke-linejoin="round"><path d="M24 3l15 6 6 15-6 15-15 6-15-6-6-15 6-15z"/><path d="M24 14l7 3 3 7-3 7-7 3-7-3-3-7 3-7z"/><path d="M24 3v11M39 9l-8 8M45 24H34M39 39l-8-8M24 45V34M9 39l8-8M3 24h11M9 9l8 8"/></svg>"""
 
-  // Settles a run that ended with nobody dragging, and looks further down the tube once a second.
-  source now = clock every 1s
-
   // "title", "play" or "over"
   state mode = "title"
   state best = 0 persist
   state seed = 1
-  // the time the run started at
+  // whether frames are being drawn: a run is on, or its crash is still settling. Everything that
+  // reads `time` is behind it, so a tile with no run costs no frames.
+  state awake = false
+  // the time the run started at, in the animation clock
   state t0 = 0
+  // the second the last run stopped at, for the still picture it leaves
+  state froze = 0
   // where the ship is around the tube, in segments (unbounded; segment s is centred on s)
   state pa = 0
   // when the ship last moved, or was last looked ahead for (seconds into the run)
@@ -65,7 +71,7 @@ app "warp tube" {
   // ---- what the ship runs into -------------------------------------------------------------------
   let dev = ev < TC ? V0 * ev + ACC * ev * ev / 2 : DC + VMAX * (ev - TC)
   let kev = max(0, floor((dev - D0) / GAP))
-  let near = gates.drop(kev).take(16).map(g => {
+  let near = gates.drop(kev).take(28).map(g => {
     k: g.k, d: g.d, t: g.t,
     o: range(N).map(s => g.ty == 0 ? (s - g.c + 4 * N) % N < g.w
       : g.ty == 1 ? (s - g.c + 4 * N) % (N / 2) < g.w2
@@ -78,15 +84,39 @@ app "warp tube" {
   let seg = ((floor(pa + 0.5) % N) + N) % N
   let dieAt = first(near.filter(g => g.t >= ev && !g.o[seg])).t ?? 9999
 
-  on now {
-    let T = time - t0
-    if mode == "play" && hold >= 0 {
-    } else if mode == "play" && T >= dieAt {
-      final = len(gates.filter(g => g.t < dieAt))
-      best = max(best, final)
-      mode = "over"
-    } else if mode == "play" && T > ev + 0.9 {
-      ev = T
+  // ---- the run's clock ---------------------------------------------------------------------------
+  // A run still at `hold` seconds in, for the store's screens; otherwise the run's own second while
+  // it is awake, and the second it stopped at once it sleeps. `time` is only read behind `awake`, so
+  // a tile with no run in it draws no frames at all.
+  let held = hold >= 0
+  let T = held ? hold : awake ? max(0, time - t0) : froze
+  // the frame clock started over: the run it belonged to is gone (the 4 s tick drops it)
+  let stale = awake ? time < t0 : false
+  let fresh = !held && (mode == "title" || stale)
+  let dead = !held && !fresh && T >= dieAt
+  let rt = fresh ? 0 : held ? hold : min(T, dieAt)
+  let since = dead ? min(T - dieAt, 1.2) : 0
+
+  // Settles a run that ended with nobody dragging, and keeps the look down the tube current. It runs
+  // while the app shows, as any trigger does, but changes nothing unless a run is awake, so a still
+  // picture is never redrawn.
+  every 4s {
+    if awake {
+      if stale {
+        mode = "title"
+        awake = false
+      } else if mode == "play" && T >= dieAt {
+        final = len(gates.filter(g => g.t < dieAt))
+        best = max(best, final)
+        froze = dieAt + 1.2
+        mode = "over"
+        // caught late: the pieces have already flown, so stop the frames now
+        if T >= froze { awake = false }
+      } else if mode == "over" && T >= froze {
+        awake = false
+      } else if mode == "play" {
+        ev = T
+      }
     }
   }
 
@@ -95,22 +125,15 @@ app "warp tube" {
     background: background
 
     // ---- where things are ----
-    // seconds into the run, stopped where it ended, and the distance flown; on the title the tube
-    // just drifts by
-    let fresh = mode == "title" || time < t0
-    let held = mode == "play" && hold >= 0
-    let T = held ? hold : time - t0
-    let dead = !fresh && !held && T >= dieAt
-    let rt = fresh ? time : held ? hold : min(T, dieAt)
-    let since = dead ? T - dieAt : 0
-    let d = fresh ? time * 9 : (rt < TC ? V0 * rt + ACC * rt * rt / 2 : DC + VMAX * (rt - TC))
+    // on the title the tube stands still too
+    let view = fresh ? 0 : pa
+    let d = fresh ? 0 : (rt < TC ? V0 * rt + ACC * rt * rt / 2 : DC + VMAX * (rt - TC))
     let dc = d - ZS
-    let view = fresh ? sin(time * 0.35) * 3 : pa
     // the screen angle of the ship's spot is straight down; everything turns about it
     let phi = 1.5707963 - view * STEP
     // a shake when it crashes, as a share of the tube's size on screen
     let shake = dead && since < 0.4 ? (0.4 - since) * 0.05 : 0
-    let shk = [shake * sin(time * 71), shake * cos(time * 53)]
+    let shk = [shake * sin(rt * 71), shake * cos(rt * 53)]
     // the next four gates ahead of the camera: how far, and their closed segments
     let kc = max(0, ceil((dc + 0.3 - D0) / GAP))
     let g4 = range(4).map(j => [D0 + (kc + j) * GAP - dc, fresh ? 0 : (near[kc - kev + j].m ?? 0)])
@@ -214,30 +237,28 @@ app "warp tube" {
       ripple: false
 
       onTap: {
-        if mode == "title" || (mode == "over" && time - t0 - dieAt > 0.8) {
+        if mode == "title" || (mode == "over" && since > 0.8) {
           seed = random(1000000)
           t0 = time
           pa = 0
           ev = 0
           final = 0
+          froze = 0
           hold = -1
+          awake = true
           mode = "play"
         }
       }
 
-      onPress: {
-        // A run from before the clock started over (the app was reloaded) is dropped.
-        if time - t0 < 0 && mode != "title" { mode = "title" }
-      }
-
       onDrag: {
         if mode == "play" && hold < 0 {
-          if time - t0 >= dieAt {
+          if T >= dieAt {
             final = len(gates.filter(g => g.t < dieAt))
             best = max(best, final)
+            froze = dieAt + 1.2
             mode = "over"
           } else {
-            ev = time - t0
+            ev = T
             pa = pa - dx / 34
           }
         }
@@ -254,7 +275,7 @@ app "warp tube" {
       if !fresh {
         if !dead {
           // engine flame, then the hull: a claw pointing down the tube
-          let fl = 0.55 + 0.25 * sin(time * 40)
+          let fl = 0.55 + 0.25 * sin(T * 40)
           path([[shx - sw * 0.35, shy + sw * 0.2], [shx, shy + sw * (0.2 + fl)], [shx + sw * 0.35, shy + sw * 0.2]], closed: true, fill: alpha(yellow, 0.85))
           path([[shx, shy - sw * 1.1], [shx + sw, shy + sw * 0.35], [shx + sw * 0.45, shy + sw * 0.1], [shx, shy + sw * 0.3], [shx - sw * 0.45, shy + sw * 0.1], [shx - sw, shy + sw * 0.35]],
             closed: true, fill: alpha(cyan, 0.35), stroke: cyan, width: 2.5)
@@ -280,7 +301,7 @@ app "warp tube" {
       let score = fresh ? 0 : max(0, ceil((d - D0) / GAP))
       if fresh {
         text("WARP TUBE", width / 2, top + height * 0.16, size: 38, bold: true, color: foreground, align: center)
-        if time % 1.2 < 0.8 { text("TAP TO START", width / 2, top + height * 0.16 + 40, size: 15, color: accent, align: center) }
+        text("TAP TO START", width / 2, top + height * 0.16 + 40, size: 15, color: accent, align: center)
         text("drag left and right to roll round the tube", width / 2, height * 0.88, size: 14, color: muted, align: center)
         if best > 0 { text("BEST ${best}", width / 2, height * 0.88 + 24, size: 15, bold: true, color: accent, align: center) }
       } else {
@@ -291,7 +312,7 @@ app "warp tube" {
           rect(0, height * 0.2 + top - 40, width, 130, fill: alpha(background, clamp(since * 3, 0, 0.75)))
           text("GAME OVER", width / 2, height * 0.2 + top, size: 34, bold: true, color: magenta, align: center)
           text("${score} gate${score == 1 ? "" : "s"}", width / 2, height * 0.2 + top + 38, size: 17, color: foreground, align: center)
-          if since > 0.8 && time % 1.2 < 0.8 { text("TAP TO FLY AGAIN", width / 2, height * 0.2 + top + 70, size: 15, color: accent, align: center) }
+          if since > 0.8 { text("TAP TO FLY AGAIN", width / 2, height * 0.2 + top + 70, size: 15, color: accent, align: center) }
         }
       }
     }
