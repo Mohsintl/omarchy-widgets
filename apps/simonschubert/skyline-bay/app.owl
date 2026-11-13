@@ -1,0 +1,2256 @@
+app "skyline bay" {
+  meta { owl: 22; description: "A 3D island city builder: lay roads, zone homes, shops and industry, bring power and water, add services and parks, and grow a hamlet into a skyline"; version: "1.0"; license: "MIT"; category: "games" }
+  // How it works. The island is 22 x 22 tiles, kept in two persisted lists: g (what's on a tile) and lv (how far a
+  // zoned lot has grown, 0 to 3). Every 2 seconds a tick settles the cash, and lots with demand for their zone grow a
+  // level if what they need is there: a road that reaches the highway, power, water (from level 2), land value
+  // (parks, plazas, a sea view, services nearby, no industry next door) and the city's level. The city levels up with
+  // its population, which unlocks buildings; quests lead the way and pay out.
+  //
+  // Drawing: everything is 3D (Canvas scene and model). The sea is one big plane, the island one terrain whose cells
+  // take the tiles' colors, the road markings and bridge decks a few meshes of flat quads, each in a scene of its own so
+  // nothing on the ground is sorted under it. Buildings are meshes made once from boxes, gabled and hipped roofs,
+  // cylinders and cones, and each tile draws one with model(), turned to face its road. Cars drive routes walked along
+  // the roads; boats sail the bay; chimneys smoke. The buildings' scene reads no clock, so the launcher keeps it drawn
+  // and only works through its triangles again when the city or the view changes; what moves has scenes of its own,
+  // cars and boats under it and smoke, rockets and lots rising over it. One finger pans (or paints roads and zones while
+  // a tool is out), two fingers zoom and turn the island, and a tap builds or looks at a tile.
+  //
+  // Power is the sun's: solar farms make it while it shines, and every 4 minutes (by the clock, so it carries on while
+  // closed) clouds roll in for about a minute and a half and the farms make little. Batteries store what's left over
+  // for the clouds, and a city without enough goes dark: dark buildings pay no taxes and can't grow. A research lab buys better panels and batteries, and in the end rocketry, for a
+  // launch pad that sends satellites up for paying customers.
+  //
+  // Traffic: a lot's traffic is the buildings around it (5 x 5 tiles, by level) over the roads around it, so dense
+  // blocks with few roads jam, which costs land value and happiness. Bus stops (with a depot running the buses) ease it
+  // by 35% 3 tiles round, and subway stations by 60% 4 tiles round once tunnels link them to another station. Tunnels
+  // are a layer of their own, `sub`, dug like roads and seen in the subway view; bus stops another, `stops`, the road
+  // tiles with a shelter on their sidewalk.
+  //
+  // Land: a city's island has a coast of its own (cities from before stay square), cut into 16 parcels of 5 or 6 tiles
+  // a side (9 on the smaller islands from before). A new city owns the middle and the highway's side; the rest is bought
+  // a parcel at a time, beside what's owned, each dearer than the last. (The island stays 22 x 22 tiles: every tile is
+  // worked through on each change, and a bigger grid would run out of the launcher's work per update.)
+  //
+  // Cities: up to four, on four maps (a bay, a forest lake, a harbor, a river delta), easy to hard. The city being played
+  // is in the states above; the others wait in `saves` with their cash and the time they were left, so they earn
+  // for up to an hour like a closed app, and swapping one in swaps the playing one out.
+  title: ""
+  statusBar: false
+  edge: true
+  // smooth under the finger (an app at 60 keeps full rate), easier on the battery while watching
+  fps: gm != 0 ? 60 : 30
+  icon: """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256">
+    <clipPath id="t"><rect width="256" height="256" rx="56"/></clipPath>
+    <g clip-path="url(#t)">
+    <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#7fd0f5"/><stop offset="0.55" stop-color="#3f9fd8"/><stop offset="1" stop-color="#2f86c4"/></linearGradient>
+    <rect width="256" height="256" fill="url(#sky)"/>
+    <circle cx="222" cy="34" r="20" fill="#ffd56a"/>
+    <path d="M-27.8 160.0 L128.0 237.9 L128.0 253.9 L-27.8 176.0 Z" fill="#d9bf82"/>
+    <path d="M283.8 160.0 L128.0 237.9 L128.0 253.9 L283.8 176.0 Z" fill="#c4a86a"/>
+    <path d="M128.0 82.1 L283.8 160.0 L128.0 237.9 L-27.8 160.0 Z" fill="#f2e1ab"/>
+    <path d="M128.0 90.8 L266.3 160.0 L128.0 229.2 L-10.3 160.0 Z" fill="#8bcd65"/>
+    <path d="M96.8 213.6 L128.0 229.2 L159.2 213.6 L128.0 218.9 Z" fill="#4fb0dd"/>
+    <path d="M66.4 121.6 L204.8 190.8 L187.7 199.3 L49.3 130.2 Z" fill="#5f6675"/>
+    <path d="M189.6 121.6 L206.7 130.2 L68.3 199.3 L51.2 190.8 Z" fill="#5f6675"/>
+    <path d="M71.0 131.5 L82.4 137.2 L80.5 138.2 L69.1 132.4 Z" fill="#f6efd8"/>
+    <path d="M185.0 131.5 L186.9 132.4 L175.5 138.2 L173.6 137.2 Z" fill="#f6efd8"/>
+    <path d="M150.8 171.4 L162.2 177.1 L160.3 178.1 L148.9 172.3 Z" fill="#f6efd8"/>
+    <path d="M105.2 171.4 L107.1 172.3 L95.7 178.1 L93.8 177.1 Z" fill="#f6efd8"/>
+    <path d="M173.6 182.8 L185.0 188.5 L183.1 189.4 L171.7 183.8 Z" fill="#f6efd8"/>
+    <path d="M82.4 182.8 L84.3 183.8 L72.9 189.4 L71.0 188.5 Z" fill="#f6efd8"/>
+    <path d="M84.3 119.2 L128.0 141.0 L128.0 127.0 L84.3 105.2 Z" fill="#6fbde8"/>
+    <path d="M171.7 119.2 L128.0 141.0 L128.0 127.0 L171.7 105.2 Z" fill="#3d8fd0"/>
+    <path d="M84.3 105.2 L128.0 127.0 L128.0 113.0 L84.3 91.2 Z" fill="#e8eef5"/>
+    <path d="M171.7 105.2 L128.0 127.0 L128.0 113.0 L171.7 91.2 Z" fill="#c9d3dd"/>
+    <path d="M84.3 91.2 L128.0 113.0 L128.0 99.0 L84.3 77.2 Z" fill="#6fbde8"/>
+    <path d="M171.7 91.2 L128.0 113.0 L128.0 99.0 L171.7 77.2 Z" fill="#3d8fd0"/>
+    <path d="M84.3 77.2 L128.0 99.0 L128.0 85.0 L84.3 63.2 Z" fill="#e8eef5"/>
+    <path d="M171.7 77.2 L128.0 99.0 L128.0 85.0 L171.7 63.2 Z" fill="#c9d3dd"/>
+    <path d="M84.3 63.2 L128.0 85.0 L128.0 71.0 L84.3 49.2 Z" fill="#6fbde8"/>
+    <path d="M171.7 63.2 L128.0 85.0 L128.0 71.0 L171.7 49.2 Z" fill="#3d8fd0"/>
+    <path d="M128.0 27.3 L171.7 49.2 L128.0 71.0 L84.3 49.2 Z" fill="#eef3f7"/>
+    <path d="M128.0 48.2 L130.7 49.5 L130.7 31.5 L128.0 30.2 Z" fill="#ffc94a"/>
+    <path d="M164.1 155.2 L204.0 175.2 L204.0 161.2 L164.1 141.2 Z" fill="#58c2c0"/>
+    <path d="M243.9 155.2 L204.0 175.2 L204.0 161.2 L243.9 141.2 Z" fill="#3a9a98"/>
+    <path d="M164.1 141.2 L204.0 161.2 L204.0 147.2 L164.1 127.2 Z" fill="#e8eef5"/>
+    <path d="M243.9 141.2 L204.0 161.2 L204.0 147.2 L243.9 127.2 Z" fill="#c9d3dd"/>
+    <path d="M164.1 127.2 L204.0 147.2 L204.0 133.2 L164.1 113.2 Z" fill="#58c2c0"/>
+    <path d="M243.9 127.2 L204.0 147.2 L204.0 133.2 L243.9 113.2 Z" fill="#3a9a98"/>
+    <path d="M164.1 113.2 L204.0 133.2 L204.0 119.2 L164.1 99.2 Z" fill="#e8eef5"/>
+    <path d="M243.9 113.2 L204.0 133.2 L204.0 119.2 L243.9 99.2 Z" fill="#c9d3dd"/>
+    <path d="M204.0 79.3 L243.9 99.2 L204.0 119.2 L164.1 99.2 Z" fill="#eef3f7"/>
+    <path d="M12.1 155.2 L52.0 175.2 L52.0 161.2 L12.1 141.2 Z" fill="#8fd0f2"/>
+    <path d="M91.9 155.2 L52.0 175.2 L52.0 161.2 L91.9 141.2 Z" fill="#5aaee6"/>
+    <path d="M12.1 141.2 L52.0 161.2 L52.0 147.2 L12.1 127.2 Z" fill="#e8eef5"/>
+    <path d="M91.9 141.2 L52.0 161.2 L52.0 147.2 L91.9 127.2 Z" fill="#c9d3dd"/>
+    <path d="M12.1 127.2 L52.0 147.2 L52.0 133.2 L12.1 113.2 Z" fill="#8fd0f2"/>
+    <path d="M91.9 127.2 L52.0 147.2 L52.0 133.2 L91.9 113.2 Z" fill="#5aaee6"/>
+    <path d="M52.0 93.3 L91.9 113.2 L52.0 133.2 L12.1 113.2 Z" fill="#eef3f7"/>
+    <rect x="28.6" y="156.7" width="5" height="10" fill="#7a5236"/>
+    <circle cx="31.1" cy="148.7" r="14" fill="#4fa83f"/>
+    <circle cx="28.1" cy="144.7" r="8" fill="#6cc055"/>
+    <rect x="203.4" y="166.2" width="5" height="10" fill="#7a5236"/>
+    <circle cx="205.9" cy="158.2" r="14" fill="#4fa83f"/>
+    <circle cx="202.9" cy="154.2" r="8" fill="#6cc055"/>
+    <path d="M160.7 181.7 L169.0 185.8 L169.0 178.8 L160.7 174.7 Z" fill="#f2b134"/>
+    <path d="M174.4 183.2 L169.0 185.8 L169.0 178.8 L174.4 176.2 Z" fill="#f2b134"/>
+    <path d="M166.0 172.0 L174.4 176.2 L169.0 178.8 L160.7 174.7 Z" fill="#f2b134"/>
+    <path d="M95.7 193.2 L126.1 208.4 L126.1 192.4 L95.7 177.2 Z" fill="#fbf3e4"/>
+    <path d="M156.5 193.2 L126.1 208.4 L126.1 192.4 L156.5 177.2 Z" fill="#e3d6bf"/>
+    <path d="M126.1 162.1 L156.5 177.2 L126.1 192.4 L95.7 177.2 Z" fill="#fbf3e4"/>
+    <path d="M95.7 177.2 L126.1 192.4 L126.1 159.2 Z" fill="#e4574a"/>
+    <path d="M156.5 177.2 L126.1 192.4 L126.1 159.2 Z" fill="#b8402f"/>
+    <path d="M69.1 208.4 L99.5 223.6 L99.5 207.6 L69.1 192.4 Z" fill="#ffe0c2"/>
+    <path d="M129.9 208.4 L99.5 223.6 L99.5 207.6 L129.9 192.4 Z" fill="#e6c3a2"/>
+    <path d="M99.5 177.2 L129.9 192.4 L99.5 207.6 L69.1 192.4 Z" fill="#ffe0c2"/>
+    <path d="M69.1 192.4 L99.5 207.6 L99.5 174.4 Z" fill="#3d7fd0"/>
+    <path d="M129.9 192.4 L99.5 207.6 L99.5 174.4 Z" fill="#2d62a6"/>
+    </g></svg>"""
+
+  source now = clock every 1s
+
+  // ---- the city, kept --------------------------------------------------------------------------------
+  state g = [] persist
+  state lv = [] persist
+  state bank = 16000 persist
+  state since = 0 persist
+  // the most residents the city has had (its level follows it), and the level already rewarded
+  state best = 0 persist
+  state seen = 1 persist
+  state qi = 0 persist
+  state tax = 9 persist
+  state snd = true persist
+  // the map of the city being played, and the other cities, kept as they were left
+  state mapk = 0 persist
+  // 2 for an island filling the grid with 16 parcels to buy, 1 for a smaller island with 9 (from before), 0 for a square
+  // city from before; the parcels owned
+  state mapv = 0 persist
+  state own = [] persist
+  // power stored in the batteries; technologies researched, the one being researched and when it's done; rockets
+  // launched, when the last went up, and when its customer pays (and how much)
+  state batt = 0 persist
+  state tech = [] persist
+  // subway tunnels: 1 on each tile with one
+  state sub = [] persist
+  // road tiles with a bus stop
+  state stops = [] persist
+  state rk = -1 persist
+  state rEnd = 0 persist
+  state nl = 0 persist
+  state lastL = 0 persist
+  state payAt = 0 persist
+  state rw = 0 persist
+  state saves = [] persist
+  state yaw = 35 persist
+  state zoom = 30 persist
+  state tx = -6 persist
+  state tz = 0.5 persist
+  // ---- what's going on now -----------------------------------------------------------------------------
+  // the open toolbar category, the tool (0 none, 1 road, 2-4 zones, 9 bulldoze, 10-20 a building), the tile looked at
+  // (-2 the city hall panel)
+  state cat = -1
+  state tool = 0
+  state sel = -1
+  // the touch: 0 idle, 1 down, 2 panning, 3 painting (after a press held still), 4 two fingers; the fingers last seen; where a paint started and is
+  state gm = 0
+  // when the finger went down (frame clock) and the tile under it, for press-and-hold painting
+  state downT = 0
+  state downC = -1
+  // the rocket in the air: the pad's tile and when it lifted off (frame clock)
+  state lc = -1
+  state lt = -99
+  state fingers = []
+  state pa = -1
+  state pb = -1
+  // tiles that grew this tick (they rise out of the ground), and numbers floating up
+  state fresh = []
+  state pops = []
+  state msg = ""
+  state msgT = -99
+  state boot = false
+  // the other city whose delete was tapped once
+  state armDel = -1
+  // the map view: -1 none, 0-3 how fast police, fire, clinics and schools get somewhere, 4 land value
+  state ov = -1
+
+  // ---- the island ---------------------------------------------------------------------------------------
+  let N = 22
+  let NN = 484
+  // the highway comes in on the left edge, row 11
+  let HC = 242
+  let CX = range(NN).map(c => c % N)
+  let CZ = range(NN).map(c => floor(c / N))
+  let WX = range(NN).map(c => c % N - 10.5)
+  let WZ = range(NN).map(c => floor(c / N) - 10.5)
+  // neighbours: [north (-z), south (+z), west (-x), east (+x)], -1 off the map
+  let NB4 = range(NN).map(c => [c >= N ? c - N : -1, c < NN - N ? c + N : -1, c % N > 0 ? c - 1 : -1, c % N < N - 1 ? c + 1 : -1])
+  // The maps: their ground, woods (trees: the noise a tile needs for woods, lower is more) and beach colors, which
+  // tree models stand in the woods, and the cash a city starts with.
+  let MAPS = [
+    {n: "Skyline Bay", d: "A sheltered bay and a winding river", lvl: 0, trees: 1.55, tc: [#93d46c, #8bcd65], wc: [#7cc35a, #78bd57], bc: [#f2e1ab, #eedba2], tree: [33, 34, 35, 36]},
+    {n: "Pine Valley", d: "Thick forest round a mountain lake", lvl: 0, trees: 1.0, tc: [#86c862, #7ec05b], wc: [#68a84b, #64a248], bc: [#f2e1ab, #eedba2], tree: [36, 34, 36, 33]},
+    {n: "Harbor Point", d: "Green hills round a deep harbor", lvl: 1, trees: 1.4, tc: [#8fd06a, #87c963], wc: [#72b552, #6eaf4f], bc: [#efdcaa, #ead6a2], tree: [36, 33, 34, 36]},
+    {n: "River Delta", d: "Lush land split by a river delta: bring bridges", lvl: 2, trees: 1.9, tc: [#9ad672, #92cf6b], wc: [#7fc35c, #7abd58], bc: [#f4e4b4, #f0dfad], tree: [35, 33, 35, 34]}
+  ]
+  // What a difficulty changes: the starting cash, taxes coming in, upkeep going out, the price of land, and the weather
+  // (where in its round it clouds over, is cloudy and clears: a hard city spends longer under clouds).
+  let DIFF = [
+    {n: "EASY", cash: 16000, inc: 1.15, upk: 0.85, land: 0.8, wx: [0.45, 0.55, 0.85]},
+    {n: "MEDIUM", cash: 12000, inc: 1, upk: 1, land: 1, wx: [0.45, 0.55, 0.85]},
+    {n: "HARD", cash: 9000, inc: 0.85, upk: 1.2, land: 1.3, wx: [0.38, 0.45, 0.9]}
+  ]
+  // their water: a bay in the far corner and a river winding down from it; a lake with a stream; a harbor reaching
+  // in from the north; a river that splits into three on its way to the sea
+  let WETS = range(4).map(k => range(NN).map(c => [CX[c], CZ[c]]).map(q => k == 0 ? sqrt(pow(q[0] - 21.5, 2) * 0.8 + pow(q[1] + 0.5, 2)) < 6.8 + hash(q[1] * N + q[0], 3) * 0.9 || (q[1] >= 5 && abs(q[0] - (15.2 + 2.3 * sin(q[1] * 0.42))) < 1.05)
+    : k == 1 ? sqrt(pow(q[0] - 12.5, 2) * 1.1 + pow(q[1] - 7.5, 2)) < 3.4 + hash(q[1] * N + q[0], 3) * 0.8 || (q[1] >= 10 && abs(q[0] - (12.3 + 1.6 * sin(q[1] * 0.55))) < 0.8)
+    : k == 2 ? q[0] > 3 && q[1] < 9.5 - abs(q[0] - 12.5) * 0.75 + hash(q[1] * N + q[0], 3) * 0.9
+    : q[0] >= 7 && any(range(3), b => abs(q[1] - (11 + (b - 1) * (q[0] - 7) * 0.62 + sin(q[0] * 0.7 + b * 2) * 0.5)) < 0.8)))
+  // 6 water, 7 beach (the island's rim), 1 the highway's tile, 0 land
+  let TERS = range(4).map(k => range(NN).map(c => WETS[k][c] ? 6 : c == HC ? 1 : (CX[c] == 0 || CZ[c] == 0 || CX[c] == N - 1 || CZ[c] == N - 1) ? 7 : 0))
+  let G0S = range(4).map(k => range(NN).map(c => TERS[k][c] != 0 ? TERS[k][c] : c == HC + 1 ? 1 : (sin(CX[c] * 0.55 + 1.3 + k) + cos(CZ[c] * 0.6 + k * 2) * 0.9 + hash(c, 5, k) * 1.2 > MAPS[k].trees && abs(CZ[c] - 11) > 1) ? 5 : 0))
+  // the islands: a coast that wanders in and out round the middle, beaches along it, the highway bridging in on row 11
+  let ISL = range(4).map(k => range(NN).map(c => [atan2(CZ[c] - 10.5, CX[c] - 10.5)].map(a => sqrt(pow(CX[c] - 10.5, 2) + pow(CZ[c] - 10.5, 2)) < 10.8 + 1.2 * sin(3 * a + k * 1.7) + 0.7 * sin(5 * a + k * 2.9 + 1) + hash(c, 17, k) * 0.4)[0]))
+  let TERS1 = range(4).map(k => range(NN).map(c => !ISL[k][c] || WETS[k][c] ? 6 : any(NB4[c], n => n < 0 || !ISL[k][n]) ? 7 : 0))
+  let HCF = range(4).map(k => first(range(N).filter(x => ISL[k][11 * N + x])) ?? 4)
+  let G0S1 = range(4).map(k => range(NN).map(c => CZ[c] == 11 && CX[c] <= HCF[k] + 1 ? 1 : TERS1[k][c] != 0 ? TERS1[k][c] : (sin(CX[c] * 0.55 + 1.3 + k) + cos(CZ[c] * 0.6 + k * 2) * 0.9 + hash(c, 5, k) * 1.2 > MAPS[k].trees && abs(CZ[c] - 11) > 1) ? 5 : 0))
+  let MP = MAPS[mapk]
+  let DF = DIFF[MP.lvl]
+  // the map being played (the lists of all four above are for the new-city cards)
+  let WETC = [mapk].map(k => range(NN).map(c => [CX[c], CZ[c]]).map(q => k == 0 ? sqrt(pow(q[0] - 21.5, 2) * 0.8 + pow(q[1] + 0.5, 2)) < 6.8 + hash(q[1] * N + q[0], 3) * 0.9 || (q[1] >= 5 && abs(q[0] - (15.2 + 2.3 * sin(q[1] * 0.42))) < 1.05)
+    : k == 1 ? sqrt(pow(q[0] - 12.5, 2) * 1.1 + pow(q[1] - 7.5, 2)) < 3.4 + hash(q[1] * N + q[0], 3) * 0.8 || (q[1] >= 10 && abs(q[0] - (12.3 + 1.6 * sin(q[1] * 0.55))) < 0.8)
+    : k == 2 ? q[0] > 3 && q[1] < 9.5 - abs(q[0] - 12.5) * 0.75 + hash(q[1] * N + q[0], 3) * 0.9
+    : q[0] >= 7 && any(range(3), b => abs(q[1] - (11 + (b - 1) * (q[0] - 7) * 0.62 + sin(q[0] * 0.7 + b * 2) * 0.5)) < 0.8)))[0]
+  let TER0C = [mapk].map(k => range(NN).map(c => WETC[c] ? 6 : c == HC ? 1 : (CX[c] == 0 || CZ[c] == 0 || CX[c] == N - 1 || CZ[c] == N - 1) ? 7 : 0))[0]
+  let G00C = [mapk].map(k => range(NN).map(c => TER0C[c] != 0 ? TER0C[c] : c == HC + 1 ? 1 : (sin(CX[c] * 0.55 + 1.3 + k) + cos(CZ[c] * 0.6 + k * 2) * 0.9 + hash(c, 5, k) * 1.2 > MAPS[k].trees && abs(CZ[c] - 11) > 1) ? 5 : 0))[0]
+  let ISLC = [mapk].map(k => range(NN).map(c => [atan2(CZ[c] - 10.5, CX[c] - 10.5)].map(a => sqrt(pow(CX[c] - 10.5, 2) + pow(CZ[c] - 10.5, 2)) < (mapv == 2 ? 10.8 + 1.2 * sin(3 * a + k * 1.7) + 0.7 * sin(5 * a + k * 2.9 + 1) + hash(c, 17, k) * 0.4 : 9.3 + 1.5 * sin(3 * a + k * 1.7) + 0.9 * sin(5 * a + k * 2.9 + 1) + hash(c, 17, k) * 0.5))[0]))[0]
+  let TER1C = [mapk].map(k => range(NN).map(c => !ISLC[c] || WETC[c] ? 6 : any(NB4[c], n => n < 0 || !ISLC[n]) ? 7 : 0))[0]
+  let HCFC = [mapk].map(k => first(range(N).filter(x => ISLC[11 * N + x])) ?? 4)[0]
+  let G01C = [mapk].map(k => range(NN).map(c => CZ[c] == 11 && CX[c] <= HCFC + 1 ? 1 : TER1C[c] != 0 ? TER1C[c] : (sin(CX[c] * 0.55 + 1.3 + k) + cos(CZ[c] * 0.6 + k * 2) * 0.9 + hash(c, 5, k) * 1.2 > MAPS[k].trees && abs(CZ[c] - 11) > 1) ? 5 : 0))[0]
+  let TER = mapv >= 1 ? TER1C : TER0C
+  let G0 = mapv >= 1 ? G01C : G00C
+  // The parcels, numbered row by row: 4 x 4 of 5 or 6 tiles on a big island (PB are their edges), 3 x 3 of 7 or 8
+  // before. A city starts with the middle and the highway's side.
+  let PB = mapv == 2 ? [0, 6, 11, 16, 22] : [0, 7, 15, 22]
+  let NPX = len(PB) - 1
+  let NPAR = NPX * NPX
+  let PSTART = mapv == 2 ? [5, 6, 8, 9, 10] : [3, 4]
+  let PAR = range(NN).map(c => count(range(1, NPX), i => CZ[c] >= PB[i]) * NPX + count(range(1, NPX), i => CX[c] >= PB[i]))
+  let OWNL = len(own) == NPAR ? own : range(NPAR).map(q => mapv == 0 || any(PSTART, t => t == q) ? 1 : 0)
+  let OWNED = range(NN).map(c => OWNL[PAR[c]] == 1)
+  let NOWN = count(OWNL, o => o == 1)
+  let PNB = range(NPAR).map(q => [q - NPX, q + NPX, q % NPX > 0 ? q - 1 : -1, q % NPX < NPX - 1 ? q + 1 : -1].filter(n => n >= 0 && n < NPAR))
+  let BUYABLE = range(NPAR).map(q => OWNL[q] == 0 && any(PNB[q], n => OWNL[n] == 1))
+  let LPRICE = round(DF.land * (mapv == 2 ? [2000, 3500, 5000, 7000, 9500, 12500, 16000, 20000, 25000, 31000, 38000] : [3000, 6000, 10000, 15000, 22000, 30000, 40000])[min(mapv == 2 ? 10 : 6, max(0, NOWN - len(PSTART)))] / 500) * 500
+  // a parcel's middle and size, in tiles
+  let PMID = range(NPX).map(i => (PB[i] + PB[i + 1]) / 2)
+  let PSIZ = range(NPX).map(i => PB[i + 1] - PB[i])
+  // each map small, for the new-city cards: the tiles that aren't plain ground
+  let MINI = range(4).map(k => range(NN).filter(c => G0S1[k][c] != 0).map(c => [CX[c], CZ[c], G0S1[k][c] == 6 ? #3f9fd8 : G0S1[k][c] == 7 ? MAPS[k].bc[0] : G0S1[k][c] == 1 ? #5f6675 : MAPS[k].wc[0]]))
+  let LROW3 = range(NN).map(c => TER[c] != 6 || (CX[c] > 0 && TER[c - 1] != 6) || (CX[c] < N - 1 && TER[c + 1] != 6))
+  let SHORE = range(NN).map(c => TER[c] == 6 && (LROW3[c] || (CZ[c] > 0 && LROW3[c - N]) || (CZ[c] < N - 1 && LROW3[c + N])))
+  let WCELLS = range(NN).filter(c => TER[c] == 6)
+  // (a sweep along each row, then down each column of that, so 10 looks a tile however much water there is)
+  let WROW = range(NN).map(c => any(range(5), i => CX[c] + i - 2 >= 0 && CX[c] + i - 2 < N && TER[c + i - 2] == 6))
+  let NEARW = range(NN).map(c => TER[c] != 6 && any(range(5), i => CZ[c] + i - 2 >= 0 && CZ[c] + i - 2 < N && WROW[c + (i - 2) * N]))
+  // the ground's corners: the rim and the sea floor sit low, so the island has beaches all round
+  let HT = range(N + 1).map(i => range(N + 1).map(j => (i == 0 || j == 0 || i == N || j == N) && !((mapv == 0 || TER[HC] != 6) && j == 0 && (i == 11 || i == 12)) ? -0.32 : all([[i - 1, j - 1], [i - 1, j], [i, j - 1], [i, j]].filter(q => q[0] >= 0 && q[1] >= 0 && q[0] < N && q[1] < N), q => TER[q[0] * N + q[1]] == 6) ? -0.32 : 0))
+
+  when len(g) != NN {
+    mapv = 2
+    g = G0
+    lv = range(NN).map(c => 0)
+  }
+  // cities from before solar: their coal power plants become solar farms
+  when len(g) == NN && any(g, k => k == 25) {
+    g = g.map(k => k == 25 ? 0 : k)
+  }
+  when len(g) == NN && (any(g, k => k == 10) || any(saves, sv => any(sv.g, k => k == 10))) {
+    g = g.map(k => k == 10 ? 17 : k)
+    saves = saves.map(sv => merge(sv, {g: sv.g.map(k => k == 10 ? 17 : k)}))
+    msg = "POWER PLANTS ARE SOLAR FARMS NOW"
+    msgT = now ?? 0
+  }
+  let GG = len(g) == NN ? g : G0
+  let LV = len(lv) == NN ? lv : range(NN).map(c => 0)
+  let SUBL = len(sub) == NN ? sub : range(NN).map(c => 0)
+
+  // ---- what can be built ------------------------------------------------------------------------------------
+  // (10 was the coal power plant, before power went solar)
+  let TNAME = ["", "Road", "Homes", "Shops", "Industry", "Woods", "Water", "Beach", "Subway", "Bulldoze", "", "Water Tower", "Park", "Police", "Fire Station", "Clinic", "School", "Solar Farm", "Plaza", "Stadium", "Bay Tower", "Battery", "Lab", "Launch Pad", "Bus Depot", "Bus Stop", "Station"]
+  let TCOST = [0, 10, 5, 5, 5, 0, 0, 0, 40, 5, 0, 1200, 250, 1500, 1500, 2400, 2400, 2500, 1000, 12000, 30000, 1800, 8000, 60000, 5000, 300, 6000]
+  let TLV = [1, 1, 1, 1, 1, 1, 1, 1, 5, 1, 1, 1, 1, 2, 2, 3, 3, 1, 3, 5, 7, 1, 3, 8, 3, 3, 5]
+  let TUP = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0.3, 0.04, 0.55, 0.55, 0.7, 0.7, 0.2, 0.15, 1.5, 2, 0.15, 1, 2, 0.5, 0.04, 0.6]
+  let TCOL = [#000000, #5f6675, #5cc96b, #4a9be8, #f2b134, #000000, #000000, #000000, #3d7fd0, #ff6b57, #000000, #5ab0e8, #74c95c, #2f5fb3, #d8453a, #e5413b, #e0855a, #2b4f8e, #e7dfcf, #f4f4f4, #ffc94a, #2fd0b4, #9b7be0, #e4574a, #f2b134, #f2b134, #3d7fd0]
+  let TCOSTS = TCOST.map(v => "$" + fmtNum(v))
+  // what a tool does, said once when it's picked
+  let TTIP = range(27).map(t => t == 1 ? "TAP FOR ONE TILE · HOLD, THEN DRAG FOR A ROAD" : t == 8 ? "HOLD AND DRAG TO DIG TUNNELS · AGAIN OVER ONE TO FILL IT IN" : t == 25 ? "TAP A ROAD FOR A STOP ON ITS SIDEWALK · AGAIN TO REMOVE IT" : t >= 2 && t <= 4 ? "TAP, OR HOLD AND DRAG, TO ZONE ${upper(TNAME[t])}" : t == 9 ? "TAP, OR HOLD AND DRAG, TO CLEAR" : "TAP AN EMPTY TILE TO BUILD")
+  let CATS = ["ROAD", "ZONE", "POWER", "SERVICE", "SPECIAL", "CLEAR"]
+  let CATC = [#8b93a3, #5cc96b, #f2b134, #4a9be8, #74c95c, #ff6b57]
+  let CITEMS = [[1, 25, 24, 8, 26], [2, 3, 4], [17, 21, 11], [13, 14, 15, 16, 22], [12, 18, 19, 20, 23], [9]]
+  // people a home holds and jobs a shop or a works gives, by level; power and water each uses
+  let CAPR = [0, 10, 35, 110]
+  let CAPC = [0, 6, 20, 60]
+  let CAPI = [0, 10, 25, 50]
+  let USEP = [[0, 1, 2, 4], [0, 1, 3, 5], [0, 2, 4, 6]]
+  let USEW = [[0, 1, 2, 4], [0, 1, 2, 3], [0, 1, 2, 3]]
+  let THR = [0, 60, 220, 600, 1400, 2800, 5200, 9000, 15000]
+  let LVN = ["Hamlet", "Village", "Town", "Big Town", "City", "Big City", "Metropolis", "Megacity", "Capital"]
+  let ZCOL = [#5cc96b, #4a9be8, #f2b134]
+  // how tall each zone's building is by level, for the numbers rising from them
+  let BHT = [[0, 0.62, 0.66, 1.25], [0, 0.48, 0.82, 2.3], [0, 0.48, 0.58, 0.78]]
+
+  // ---- the city's numbers, worked out again when it changes -------------------------------------------------
+  let KC = reduce(GG, (A, k) => set(A, k, A[k] + 1), range(27).map(i => 0))
+  // What the lab can research: cost, minutes it takes, the city level it needs, the technology before it, and what it
+  // gives: sb more solar (a share of a farm's base), bb more battery (of a battery's base), pf less power used. g is its
+  // track (solar cells, batteries, the city, space) and o its place in it. The numbers are what saved cities keep, so
+  // new ones go on the end.
+  let TECH = [
+    {n: "Better Panels", d: "Solar farms make 30% more", c: 3000, m: 1.5, lv: 2, req: -1, sb: 0.3, g: 0, o: 1},
+    {n: "Lithium Cells", d: "Batteries hold 50% more", c: 4000, m: 2, lv: 2, req: -1, bb: 0.5, g: 1, o: 1},
+    {n: "Water Recycling", d: "Water towers pump 50% more", c: 6000, m: 2.5, lv: 3, req: -1, g: 2, o: 1},
+    {n: "Smart Grid", d: "Buildings use 15% less power", c: 9000, m: 3, lv: 4, req: -1, pf: 0.15, g: 2, o: 2},
+    {n: "Perovskite Cells", d: "Solar farms make 40% more", c: 18000, m: 4, lv: 5, req: 12, sb: 0.4, g: 0, o: 6},
+    {n: "Solid-State Cells", d: "Batteries hold 100% more", c: 24000, m: 5, lv: 6, req: 17, bb: 1, g: 1, o: 5},
+    {n: "Rocketry", d: "Unlocks the launch pad", c: 30000, m: 6, lv: 7, req: -1, g: 3, o: 1},
+    {n: "Reusable Boosters", d: "Launches cost half and pay 50% more", c: 50000, m: 7, lv: 8, req: 6, g: 3, o: 2},
+    {n: "Space Solar", d: "Farms make 25% more, and a quarter under clouds", c: 80000, m: 8, lv: 8, req: 14, sb: 0.25, g: 0, o: 9},
+    {n: "Anti-Glare Glass", d: "Solar farms make 15% more", c: 5000, m: 2, lv: 3, req: 0, sb: 0.15, g: 0, o: 2},
+    {n: "Bifacial Panels", d: "Panels catch light on both sides: 20% more", c: 7500, m: 2.5, lv: 3, req: 9, sb: 0.2, g: 0, o: 3},
+    {n: "Sun Tracking", d: "Panels turn with the sun: 25% more", c: 11000, m: 3, lv: 4, req: 10, sb: 0.25, g: 0, o: 4},
+    {n: "PERC Cells", d: "Solar farms make 20% more", c: 14000, m: 3.5, lv: 4, req: 11, sb: 0.2, g: 0, o: 5},
+    {n: "Tandem Cells", d: "Two layers of cells: 35% more", c: 30000, m: 5, lv: 6, req: 4, sb: 0.35, g: 0, o: 7},
+    {n: "Quantum Dot Cells", d: "Solar farms make 40% more", c: 48000, m: 6, lv: 7, req: 13, sb: 0.4, g: 0, o: 8},
+    {n: "LFP Cells", d: "Batteries hold 40% more", c: 6000, m: 2.5, lv: 3, req: 1, bb: 0.4, g: 1, o: 2},
+    {n: "Silicon Anodes", d: "Batteries hold 50% more", c: 10000, m: 3, lv: 4, req: 15, bb: 0.5, g: 1, o: 3},
+    {n: "Sodium-Ion Packs", d: "Batteries hold 60% more", c: 15000, m: 4, lv: 5, req: 16, bb: 0.6, g: 1, o: 4},
+    {n: "Lithium-Sulfur", d: "Batteries hold 80% more", c: 36000, m: 6, lv: 7, req: 5, bb: 0.8, g: 1, o: 6},
+    {n: "Graphene Cells", d: "Batteries hold 100% more", c: 60000, m: 7, lv: 8, req: 18, bb: 1, g: 1, o: 7},
+    {n: "AI Grid", d: "Buildings use another 10% less power", c: 25000, m: 5, lv: 6, req: 3, pf: 0.1, g: 2, o: 3}
+  ]
+  let TGROUP = ["SOLAR CELLS", "BATTERIES", "THE CITY", "SPACE"]
+  // the lab's list, track by track
+  let TORD = range(len(TECH)).sortBy(i => TECH[i].g * 100 + TECH[i].o)
+  let HAS = range(len(TECH)).map(i => any(tech, t => t == i))
+  // the sun over a day of 4 minutes: up at about 5:00, down at about 19:00, highest at noon
+  let DAY = 240
+  let DPH = ((now ?? 0) % DAY) / DAY
+  // The weather goes round every 4 minutes: sunny (108 s), partly cloudy (24 s), cloudy (72 s), partly cloudy (36 s).
+  // WX0 is which, 0 to 2; SUNV how much sun gets through; DIMV how much the light dims, eased over a few seconds
+  // either side of a change.
+  // A new city's first minutes stay sunny: clouds come once the quests reach the battery (or one is built).
+  let CALM = qi < 4 && KC[21] == 0
+  let WX0 = CALM || DPH < DF.wx[0] ? 0 : DPH < DF.wx[1] || DPH >= DF.wx[2] ? 1 : 2
+  let SUNV = [1, 0.55, 0.1][WX0]
+  let WEATHER = ["SUNNY", "PARTLY CLOUDY", "CLOUDY"][WX0]
+  let DIMV = CALM ? 0 : avg([-0.02, -0.01, 0, 0.01, 0.02].map(o => [(DPH + o + 1) % 1].map(q => q < DF.wx[0] ? 0 : q < DF.wx[1] || q >= DF.wx[2] ? 0.05 : 0.1)[0]))
+  // power, in units a building uses: what the farms make at noon and now, what the batteries hold
+  let SEFF = 1 + sum(range(len(TECH)).map(i => HAS[i] ? (TECH[i].sb ?? 0) : 0))
+  let SOLCAP = KC[17] * 40 * SEFF
+  let SOLNOW = SOLCAP * max(SUNV, HAS[8] ? 0.25 : 0)
+  let BONE = 2500 * (1 + sum(range(len(TECH)).map(i => HAS[i] ? (TECH[i].bb ?? 0) : 0)))
+  let BCAP = KC[21] * BONE
+  let BPCT = BCAP > 0 ? clamp(batt / BCAP, 0, 1) : 0
+  let PFAC = 1 - sum(range(len(TECH)).map(i => HAS[i] ? (TECH[i].pf ?? 0) : 0))
+  // what's there to spend this tick: the sun's, and the batteries' share
+  let AVAIL = SOLNOW + min(batt, BCAP) / 2
+  // roads that reach the highway, walked out from it
+  let reach = reduce(range(NN), (A, s) => len(A.f) == 0 ? A : [unique(flatten(A.f.map(c => NB4[c]))).filter(n => n >= 0 && GG[n] == 1 && !A.r[n])].map(nf => {r: reduce(nf, (R, n) => set(R, n, true), A.r), f: nf})[0], {r: set(range(NN).map(c => false), HC, true), f: [HC]}).r
+  let RR = range(NN).filter(c => reach[c])
+  // a lot works when a road reaching the highway passes within 2 tiles
+  let NBR = range(NN).map(c => [[-2, 0], [-1, -1], [-1, 0], [-1, 1], [0, -2], [0, -1], [0, 1], [0, 2], [1, -1], [1, 0], [1, 1], [2, 0]].map(o => [CX[c] + o[0], CZ[c] + o[1]]).filter(q => q[0] >= 0 && q[1] >= 0 && q[0] < N && q[1] < N).map(q => q[1] * N + q[0]))
+  let conn = range(NN).map(c => GG[c] >= 2 && GG[c] <= 4 && any(NBR[c], n => reach[n]))
+  let ZC = range(NN).filter(c => GG[c] >= 2 && GG[c] <= 4)
+  let POP = sum(ZC.map(c => GG[c] == 2 ? CAPR[LV[c]] : 0))
+  let JC = sum(ZC.map(c => GG[c] == 3 ? CAPC[LV[c]] : 0))
+  let JI = sum(ZC.map(c => GG[c] == 4 ? CAPI[LV[c]] : 0))
+  let JOBS = JC + JI
+  let CL = count(THR, t => best >= t)
+  let XPF = CL >= 9 ? 1 : clamp((best - THR[CL - 1]) / (THR[CL] - THR[CL - 1]), 0, 1)
+  // Power and water: the plants' and towers' supply goes to lots in a fixed order (by a hash of the tile), each
+  // taking what its next level would use, so a shortage leaves the same lots dark rather than flickering.
+  let WSUP = KC[11] * 60 * (HAS[2] ? 1.5 : 1)
+  // (The order and each lot's place in it only change with the map, so a growth tick just sums and counts.)
+  let ZH = ZC.sortBy(c => hash(c, 11))
+  let RANK = reduce(range(len(ZH)), (M, i) => set(M, ZH[i], i), range(NN).map(c => -1))
+  let NPW = count(scan(ZH, (s, c) => s + USEP[GG[c] - 2][max(1, LV[c])] * PFAC, 0), s => s <= AVAIL + 0.001)
+  let NWT = count(scan(ZH, (s, c) => s + USEW[GG[c] - 2][max(1, LV[c])], 0), s => s <= WSUP)
+  let pw = RANK.map(r => r >= 0 && r < NPW)
+  let wt = RANK.map(r => r >= 0 && r < NWT)
+  let PUSE = sum(ZC.map(c => USEP[GG[c] - 2][LV[c]])) * PFAC
+  let WUSE = sum(ZC.map(c => USEW[GG[c] - 2][LV[c]]))
+  // services reach 5 tiles; parks and plazas 3; industry dirties the air 2 around
+  let SPOS = range(NN).filter(c => GG[c] >= 10)
+  let SVP = range(4).map(t => SPOS.filter(c => GG[c] == 13 + t))
+  let PARKS = SPOS.filter(c => GG[c] == 12 || GG[c] == 18 || GG[c] == 19)
+  let PLAZ = SPOS.filter(c => GG[c] == 18 || GG[c] == 20)
+  let DIRT = ZC.filter(c => GG[c] == 4)
+  // Police, fire, clinics and schools reach the whole island, but help takes longer the further it has to come: a
+  // lot's service is 1 within 3 tiles of the nearest station, falling to 0.2 at 13 tiles and beyond (0 with none).
+  // COVD is the distance to the nearest of each, -1 for none; SVC the four added up, 0 to 4.
+  let COVD = range(NN).map(c => GG[c] >= 2 && GG[c] <= 4 ? range(4).map(t => len(SVP[t]) == 0 ? -1 : sqrt(min(SVP[t].map(s => (CX[s] - CX[c]) * (CX[s] - CX[c]) + (CZ[s] - CZ[c]) * (CZ[s] - CZ[c]))))) : [-1, -1, -1, -1])
+  let COV = COVD.map(v => v.map(d => d < 0 ? 0 : d <= 3 ? 1 : max(0.2, 1 - (d - 3) * 0.08)))
+  let SVC = COV.map(v => sum(v))
+  let NPARK = range(NN).map(c => GG[c] >= 2 && GG[c] <= 4 && any(PARKS, s => CX[s] - CX[c] <= 3 && CX[c] - CX[s] <= 3 && CZ[s] - CZ[c] <= 3 && CZ[c] - CZ[s] <= 3))
+  let NPLZ = range(NN).map(c => GG[c] >= 2 && GG[c] <= 3 && any(PLAZ, s => CX[s] - CX[c] <= 4 && CX[c] - CX[s] <= 4 && CZ[s] - CZ[c] <= 4 && CZ[c] - CZ[s] <= 4))
+  let DROW = range(NN).map(c => any(range(5), i => CX[c] + i - 2 >= 0 && CX[c] + i - 2 < N && GG[c + i - 2] == 4))
+  let POLL = range(NN).map(c => (GG[c] == 2 || GG[c] == 3) && any(range(5), i => CZ[c] + i - 2 >= 0 && CZ[c] + i - 2 < N && DROW[c + (i - 2) * N]))
+  // Traffic: the buildings' levels 5 x 5 round a tile over the road tiles there (sums along rows, then down columns),
+  // eased by buses and the subway. 0 flows freely, 1 is jammed.
+  let ZLV = range(NN).map(c => GG[c] >= 2 && GG[c] <= 4 ? LV[c] : 0)
+  let LROW = range(NN).map(c => sum(range(5).map(i => CX[c] + i - 2 >= 0 && CX[c] + i - 2 < N ? ZLV[c + i - 2] : 0)))
+  let LBOX = range(NN).map(c => sum(range(5).map(i => CZ[c] + i - 2 >= 0 && CZ[c] + i - 2 < N ? LROW[c + (i - 2) * N] : 0)))
+  let RROW = range(NN).map(c => count(range(5), i => CX[c] + i - 2 >= 0 && CX[c] + i - 2 < N && GG[c + i - 2] == 1))
+  let RBOX = range(NN).map(c => sum(range(5).map(i => CZ[c] + i - 2 >= 0 && CZ[c] + i - 2 < N ? RROW[c + (i - 2) * N] : 0)))
+  let BSTOPS = unique(stops).filter(c => GG[c] == 1)
+  // the side of its tile a stop's shelter stands on: the first edge with sidewalk, -1 at a crossing with none
+  let SROT = range(NN).map(c => GG[c] != 1 ? -1 : !(NB4[c][1] >= 0 && GG[NB4[c][1]] == 1) && c != HC ? 0 : !(NB4[c][3] >= 0 && GG[NB4[c][3]] == 1) ? 90 : !(NB4[c][0] >= 0 && GG[NB4[c][0]] == 1) ? 180 : !(NB4[c][2] >= 0 && GG[NB4[c][2]] == 1) && c != HC ? 270 : -1)
+  // the subway: tunnels and stations; a station works once a tunnel links it to another
+  let SUBT = range(NN).map(c => SUBL[c] == 1 || GG[c] == 26)
+  let STAS = SPOS.filter(c => GG[c] == 26)
+  let SLINK = STAS.map(s0 => [reduce(range(60), (A, k) => len(A.f) == 0 ? A : [unique(flatten(A.f.map(c => NB4[c]))).filter(n => n >= 0 && SUBT[n] && !A.r[n])].map(nf => {r: reduce(nf, (R, n) => set(R, n, true), A.r), f: nf})[0], {r: set(range(NN).map(c => false), s0, true), f: [s0]}).r].map(R => count(STAS, s => R[s]))[0])
+  let STON = range(len(STAS)).filter(i => SLINK[i] >= 2).map(i => STAS[i])
+  let BUSC = range(NN).map(c => KC[24] > 0 && any(BSTOPS, s => CX[s] - CX[c] <= 3 && CX[c] - CX[s] <= 3 && CZ[s] - CZ[c] <= 3 && CZ[c] - CZ[s] <= 3))
+  let SUBC = range(NN).map(c => any(STON, s => CX[s] - CX[c] <= 4 && CX[c] - CX[s] <= 4 && CZ[s] - CZ[c] <= 4 && CZ[c] - CZ[s] <= 4))
+  let TRAF = range(NN).map(c => clamp((LBOX[c] / max(2, RBOX[c]) - 2.5) / 4, 0, 1) * (1 - max(BUSC[c] ? 0.35 : 0, SUBC[c] ? 0.6 : 0)))
+  let TRWORD = TRAF.map(t => t < 0.15 ? "free" : t < 0.4 ? "light" : t < 0.7 ? "busy" : "jammed")
+  let LVAL = range(NN).map(c => GG[c] >= 2 && GG[c] <= 4 ? 1 + (NPARK[c] ? 1 : 0) + (NEARW[c] ? 1 : 0) + (NPLZ[c] ? 1 : 0) + (KC[20] > 0 ? 0.5 : 0) + SVC[c] * 0.5 - (POLL[c] ? 2 : 0) - TRAF[c] * 1.5 : 0)
+  // how far each lot can be (CAPN), and grow now, which takes power (CAP); a lot that's dark keeps its level
+  // industry grows into plants beside the science: a lab within 6 tiles
+  let LABS = SPOS.filter(c => GG[c] == 22)
+  let NLAB = range(NN).map(c => GG[c] == 4 && any(LABS, s => (CX[s] - CX[c]) * (CX[s] - CX[c]) + (CZ[s] - CZ[c]) * (CZ[s] - CZ[c]) <= 36))
+  let CAPN = range(NN).map(c => [GG[c]].map(k => k < 2 || k > 4 || !conn[c] ? 0
+    : k == 2 ? (wt[c] && LVAL[c] >= 2 && CL >= 2 ? (LVAL[c] >= 3.5 && SVC[c] >= 2.6 && CL >= 4 ? 3 : 2) : 1)
+    : k == 3 ? (wt[c] && LVAL[c] >= 1.5 && CL >= 2 ? (LVAL[c] >= 3 && SVC[c] >= 1.8 && CL >= 5 ? 3 : 2) : 1)
+    : (wt[c] && CL >= 3 ? (NLAB[c] && CL >= 5 ? 3 : 2) : 1))[0])
+  let CAP = range(NN).map(c => pw[c] ? CAPN[c] : 0)
+  let CND = range(3).map(z => ZC.filter(c => GG[c] == 2 + z && LV[c] < CAP[c]))
+  let DECL = ZC.filter(c => LV[c] > CAPN[c])
+  // built lots without power right now
+  let DARK = count(ZC, c => LV[c] > 0 && !pw[c])
+  let NBUILT = max(1, count(ZC, c => LV[c] > 0))
+  // happiness: services, parks, power, water, clean air, jobs and taxes
+  let HOMES = ZC.filter(c => GG[c] == 2 && LV[c] > 0)
+  let NH = max(1, len(HOMES))
+  let APR = round(clamp(58 + sum(HOMES.map(c => SVC[c])) / NH * 5 + count(HOMES, c => NPARK[c]) / NH * 12 + (KC[19] > 0 ? 5 : 0) + (KC[20] > 0 ? 6 : 0)
+    - DARK / NBUILT * 18 - ((WSUP > 0 || CL >= 2) && WSUP < WUSE ? 12 : 0) - count(HOMES, c => POLL[c]) / NH * 15 - sum(HOMES.map(c => TRAF[c])) / NH * 12 - (tax - 9) * 3 - (POP * 0.5 > JOBS * 1.1 + 20 ? 10 : 0), 0, 100))
+  // demand for each zone, -1 to 1
+  let DR = clamp((JOBS * 1.6 + 30 - POP) / (POP * 0.25 + 30) + (APR - 60) / 150 - (tax - 9) * 0.06, -1, 1)
+  let DC = clamp((POP * 0.3 - JC + 8) / (POP * 0.12 + 10) - (tax - 9) * 0.05, -1, 1)
+  let DI = clamp((POP * 0.35 - JI + 10) / (POP * 0.12 + 12) - (tax - 9) * 0.05, -1, 1)
+  // cash: taxes in, upkeep out, a second; worked out from the last settling, for at most an hour while closed
+  // only lit buildings pay
+  let POPP = sum(ZC.map(c => GG[c] == 2 && pw[c] ? CAPR[LV[c]] : 0))
+  let JOBSP = sum(ZC.map(c => pw[c] ? (GG[c] == 3 ? CAPC[LV[c]] : GG[c] == 4 ? CAPI[LV[c]] : 0) : 0))
+  let INC = (POPP * 0.032 + JOBSP * 0.025) * tax / 9 * DF.inc
+  let UPK = (KC[1] * 0.006 + sum(SUBL) * 0.01 + len(BSTOPS) * 0.04 + sum(range(11, 27).map(k => KC[k] * TUP[k]))) * DF.upk
+  let RATE = INC - UPK
+  let tnow = now ?? since
+  let coins = bank + RATE * clamp(tnow - since, 0, 3600)
+  let HMON = (coins < 0 ? "-$" : "$") + fmtNum(abs(floor(coins)))
+  let HRATE = (RATE * 60 > -0.5 ? "+$" : "-$") + fmtNum(abs(RATE * 60)) + " /MIN"
+  let HPOP = fmtNum(POP)
+
+  // ---- quests ---------------------------------------------------------------------------------------------
+  let QS = [
+    {t: "Lay a road in from the highway", s: "roads", g: 6, r: 50},
+    {t: "Zone 6 homes beside the road", s: "homes", g: 6, r: 50},
+    {t: "Build a solar farm", s: "power", g: 1, r: 75},
+    {t: "Reach 25 residents", s: "pop", g: 25, r: 50},
+    {t: "Build a battery for cloudy spells", s: "battery", g: 1, r: 50},
+    {t: "Zone 4 shops", s: "shops", g: 4, r: 50},
+    {t: "Zone 4 industry lots", s: "ind", g: 4, r: 50},
+    {t: "Build a water tower", s: "water", g: 1, r: 50},
+    {t: "Plant a park", s: "park", g: 1, r: 50},
+    {t: "Reach 100 residents", s: "pop", g: 100, r: 100},
+    {t: "Build a police station", s: "police", g: 1, r: 100},
+    {t: "Build a fire station", s: "fire", g: 1, r: 100},
+    {t: "Grow 5 townhouses", s: "r2", g: 5, r: 125},
+    {t: "Reach 300 residents", s: "pop", g: 300, r: 150},
+    {t: "Buy a parcel of land", s: "land", g: 3, r: 125},
+    {t: "Build a bus depot", s: "depot", g: 1, r: 200},
+    {t: "Put up 3 bus stops", s: "stops", g: 3, r: 125},
+    {t: "Build a research lab", s: "lab", g: 1, r: 250},
+    {t: "Research a technology", s: "techs", g: 1, r: 150},
+    {t: "Build a clinic", s: "clinic", g: 1, r: 150},
+    {t: "Build a school", s: "school", g: 1, r: 150},
+    {t: "Build a plaza", s: "plaza", g: 1, r: 125},
+    {t: "Provide 400 jobs", s: "jobs", g: 400, r: 250},
+    {t: "Grow a high-rise", s: "t3", g: 1, r: 325},
+    {t: "Reach 1,000 residents", s: "pop", g: 1000, r: 400},
+    {t: "Research 4 technologies", s: "techs", g: 4, r: 500},
+    {t: "Reach 2,000 residents", s: "pop", g: 2000, r: 600},
+    {t: "Link 2 subway stations", s: "subway", g: 2, r: 800},
+    {t: "Build the stadium", s: "stadium", g: 1, r: 800},
+    {t: "Grow 10 high-rises", s: "t3", g: 10, r: 1000},
+    {t: "Reach 5,000 residents", s: "pop", g: 5000, r: 1600},
+    {t: "Build the Bay Tower", s: "tower", g: 1, r: 2500},
+    {t: "Research rocketry", s: "rocket", g: 1, r: 1600},
+    {t: "Build a launch pad", s: "pad", g: 1, r: 2500},
+    {t: "Launch a rocket", s: "launches", g: 1, r: 3250},
+    {t: "Reach 10,000 residents", s: "pop", g: 10000, r: 6500}
+  ]
+  let ST = {roads: len(RR), homes: KC[2], shops: KC[3], ind: KC[4], power: KC[17], battery: KC[21], lab: KC[22], techs: len(tech), rocket: HAS[6] ? 1 : 0, pad: KC[23], launches: nl, land: NOWN, depot: KC[24], stops: len(BSTOPS), subway: len(STON), water: KC[11], pop: POP, park: KC[12], police: KC[13], fire: KC[14], clinic: KC[15], school: KC[16], solar: KC[17], plaza: KC[18], stadium: KC[19], tower: KC[20], r2: count(ZC, c => GG[c] == 2 && LV[c] >= 2), t3: count(ZC, c => LV[c] == 3), jobs: JOBS}
+  let Q = qi < len(QS) ? QS[qi] : null
+  let QV = Q == null ? 0 : get(ST, Q.s, 0)
+  let QOK = Q != null && QV >= Q.g
+  // the demand panel: for homes, shops and industry, the demand, what drives it and what to do about it
+  let DWORD = [DR, DC, DI].map(d => d > 0.5 ? "HIGH" : d > 0.05 ? "SOME" : d > -0.3 ? "NONE" : "TOO MANY")
+  let RCIL = [
+    {n: "HOMES", d: DR,
+      a: "${fmtNum(JOBS)} jobs for ${fmtNum(round(POP * 0.5))} workers · ${APR}% happy · ${tax}% tax",
+      b: DR > 0.05 ? (len(CND[0]) > 0 ? "${len(CND[0])} home lot${len(CND[0]) == 1 ? "" : "s"} can grow now" : "Zone more homes, or help lots grow: power, water, parks, services")
+        : POP * 0.5 > JOBS ? "Not enough jobs: zone shops and industry" : APR < 50 ? "People are unhappy: see City Hall" : "Homes are full for now: add jobs to grow"},
+    {n: "SHOPS", d: DC,
+      a: "${fmtNum(JC)} shop jobs · the people want about ${fmtNum(round(POP * 0.3 + 8))}",
+      b: DC > 0.05 ? (len(CND[1]) > 0 ? "${len(CND[1])} shop lot${len(CND[1]) == 1 ? "" : "s"} can grow now" : "Zone more shops beside a road") : "Enough shops for now: grow the population"},
+    {n: "INDUSTRY", d: DI,
+      a: "${fmtNum(JI)} factory jobs · the people want about ${fmtNum(round(POP * 0.35 + 10))}",
+      b: DI > 0.05 ? (len(CND[2]) > 0 ? "${len(CND[2])} industry lot${len(CND[2]) == 1 ? "" : "s"} can grow now" : "Zone more industry, away from homes") : "Enough industry for now: grow the population"}
+  ]
+  // what's holding the city back, most pressing first
+  let ADV = [
+    [len(RR) < 4, "Drag a road in from the highway on the left"],
+    [any(BUYABLE, b => b) && count(range(NN), c => OWNED[c] && (GG[c] == 0 || GG[c] == 5)) < 25, "Running out of room: tap the dim land to buy more"],
+    [KC[2] + KC[3] + KC[4] == 0 && len(RR) >= 4, "Zone homes, shops and industry along the road"],
+    [count(ZC, c => !conn[c]) > 0, "Some lots have no road out to the highway"],
+    [SOLCAP == 0 && len(ZC) > 0, "Nothing grows without power: build a solar farm"],
+    [len(HOMES) > 4 && sum(HOMES.map(c => TRAF[c])) / NH > 0.4, "Traffic jams: add roads, bus stops or a subway"],
+    [len(STAS) > len(STON), "Link subway stations with tunnels"],
+    [SOLCAP > 0 && SUNV > 0.4 && DARK > 0, "Power is short even by day: build more solar farms"],
+    [SOLCAP > 0 && BCAP < PUSE * 96, "Clouds darken the city: build batteries to store the sun"],
+    [WSUP == 0 && POP > 30, "Build a water tower so lots can grow past level 1"],
+    [WSUP > 0 && count(ZC, c => LV[c] > 0 && !wt[c]) > 0, "Water is short: build another tower"],
+    [DR < 0 && POP * 0.5 > JOBS, "People need jobs: zone shops and industry"],
+    [DC > 0.4 && len(CND[1]) == 0, "Shops are wanted: zone more shops"],
+    [DI > 0.4 && len(CND[2]) == 0, "Industry is wanted: zone more lots"],
+    [DR > 0.4 && len(CND[0]) == 0, "People want to move in: zone more homes"],
+    [count(HOMES, c => POLL[c]) > 2, "Factories next to homes make them unhappy"],
+    [CL >= 2 && len(HOMES) > 4 && count(HOMES, c => !NPARK[c]) > len(HOMES) / 2, "Parks near homes raise land value"],
+    [tax > 11, "Taxes are high and people grumble"],
+    [RATE < 0, "You're losing money: grow the city or raise taxes"]
+  ].filter(a => a[0]).map(a => a[1])
+
+  // ---- the camera -----------------------------------------------------------------------------------------
+  let SW = screenWidth ?? 400
+  let SH = screenHeight ?? 800
+  let TOP = max(screenTop ?? 0, 10)
+  let INS = screenInset ?? 0
+  let PIT = 52
+  let FOV = 50
+  let TH = tan(rad(FOV / 2))
+  let EYE = [tx + zoom * cos(rad(PIT)) * sin(rad(yaw)), zoom * sin(rad(PIT)), tz + zoom * cos(rad(PIT)) * cos(rad(yaw))]
+  let CAM = {eye: EYE, look: [tx, 0, tz], fov: FOV, far: 130 + zoom * 5}
+  let FW = norm([tx - EYE[0], -EYE[1], tz - EYE[2]])
+  let RT = norm(cross(FW, [0, 1, 0]))
+  let UPV = cross(RT, FW)
+  let LIGHT = [-0.4, 1, 0.55]
+
+  // ---- models, made once ------------------------------------------------------------------------------------
+  // Parts: k 0 a box standing on y (c its sides, t its top, cs [top, front +z, back -z, +x, -x], nt no top),
+  // 1 a gabled roof with its ridge along x (e its ends), 2 a hipped roof, 3 a cylinder or a cone's cut (r at the
+  // bottom, r2 at the top, n sides), 4 a cone, 5 a wedge rising toward -z (a solar panel). A design can also have
+  // st, stacks of floors: a slab, then a band of windows set in a little, f times, and a slab on top.
+  let CORN = [[-0.5, 0, -0.5], [0.5, 0, -0.5], [0.5, 0, 0.5], [-0.5, 0, 0.5], [-0.5, 1, -0.5], [0.5, 1, -0.5], [0.5, 1, 0.5], [-0.5, 1, 0.5]]
+  let BF = [[4, 7, 6, 5], [3, 2, 6, 7], [1, 0, 4, 5], [2, 1, 5, 6], [0, 3, 7, 4]]
+  let WL = [#fbf3e4, #ffe0c2, #dfeaf7, #fbd6d0, #e3f1d6]
+  let RF = [#e4574a, #3d7fd0, #8d6a55, #4aa36a]
+  let GL = #8fd0f2
+  let GL2 = #5aaee6
+  let DOOR = #7a5236
+  let LEAF = [#5cb04a, #4fa040, #6cc055]
+  let AWN = [#e4574a, #33a37a, #3d7fd0]
+  let CARC = [#e4574a, #f2b134, #3d7fd0, #f4f4f4, #33a37a]
+  let DES = range(4).map(v => {p: [
+      {k: 0, x: 0, y: 0, z: -0.02, w: 0.54, h: 0.3, d: 0.44, c: WL[v], nt: true},
+      v == 2 ? {k: 2, x: 0, y: 0.3, z: -0.02, w: 0.62, h: 0.24, d: 0.54, c: RF[v]} : {k: 1, x: 0, y: 0.3, z: -0.02, w: 0.62, h: 0.22, d: 0.54, c: RF[v], e: WL[v]},
+      {k: 0, x: 0.1, y: 0, z: 0.215, w: 0.11, h: 0.19, d: 0.03, c: DOOR},
+      {k: 0, x: -0.12, y: 0.1, z: 0.21, w: 0.13, h: 0.1, d: 0.02, c: GL},
+      {k: 4, x: -0.3, y: 0, z: 0.33, r: 0.08, h: 0.15, n: 6, c: LEAF[v % 3]}]})
+    + range(3).map(v => {p: [
+      {k: 2, x: 0, y: 0.4, z: 0, w: 0.76, h: 0.2, d: 0.64, c: RF[(v + 1) % 4]},
+      {k: 0, x: 0, y: 0, z: 0.3, w: 0.12, h: 0.16, d: 0.02, c: DOOR},
+      {k: 4, x: -0.36, y: 0, z: 0.38, r: 0.07, h: 0.13, n: 6, c: LEAF[v]}],
+      st: [{y: 0, f: 2, w: 0.7, d: 0.58, s: 0.06, b: 0.11, c: WL[(v + 1) % 5], g: GL, nt: true}]})
+    + range(3).map(v => [0.06 + (4 + v) * 0.19].map(H => {p: [
+      {k: 0, x: 0.12, y: H, z: -0.1, w: 0.26, h: 0.1, d: 0.22, c: #b9c0c9},
+      {k: 3, x: -0.18, y: H, z: 0.16, r: 0.08, r2: 0.08, h: 0.14, n: 8, c: #a77a52, t: #8a6242},
+      {k: 0, x: 0, y: 0.15, z: 0.39, w: 0.24, h: 0.03, d: 0.06, c: RF[v]}],
+      st: [{y: 0, f: 4 + v, w: 0.72, d: 0.72, s: 0.06, b: 0.13, c: [#f1e6d6, #e8eef5, #f6dccf][v], g: GL2}]})[0])
+    + range(3).map(v => {p: [
+      {k: 0, x: 0, y: 0, z: 0, w: 0.74, h: 0.32, d: 0.6, c: #f4ede2, cs: [#c9ced6, GL, #f4ede2, #f4ede2, #f4ede2]},
+      {k: 0, x: 0, y: 0.22, z: 0.36, w: 0.76, h: 0.04, d: 0.12, c: AWN[v]},
+      {k: 0, x: 0, y: 0.32, z: 0.2, w: 0.46, h: 0.12, d: 0.04, c: AWN[v], cs: [AWN[v], #ffffff, AWN[v], AWN[v], AWN[v]]},
+      {k: 0, x: -0.18, y: 0.32, z: -0.12, w: 0.16, h: 0.07, d: 0.14, c: #aeb6c0}]})
+    + range(2).map(v => {p: [{k: 0, x: 0.1, y: 0.74, z: 0.05, w: 0.3, h: 0.08, d: 0.3, c: #b9c0c9}],
+      st: [{y: 0, f: 3, w: 0.74, d: 0.74, s: 0.05, b: 0.18, c: [#eef2f6, #f5efe6][v], g: [#6fbde8, #58c2c0][v]}]})
+    + range(2).map(v => [0.045 + (7 + v) * 0.235].map(H => {p: [{k: 0, x: 0, y: H + 0.325, z: 0, w: 0.03, h: 0.4, d: 0.03, c: #c9ced6}],
+      st: [{y: 0, f: 7 + v, w: 0.74, d: 0.74, s: 0.045, b: 0.19, c: #e4eaf1, g: [#4f9fdc, #3fb3c9][v]},
+           {y: H, f: 2, w: 0.5, d: 0.5, s: 0.035, b: 0.11, c: #e4eaf1, g: [#4f9fdc, #3fb3c9][v]}]})[0])
+    + range(2).map(v => {p: [
+      {k: 0, x: 0, y: 0, z: 0, w: 0.8, h: 0.28, d: 0.62, c: [#d4cbb9, #c9d1d8][v], nt: true},
+      {k: 1, x: 0, y: 0.28, z: 0, w: 0.84, h: 0.14, d: 0.66, c: #8b97a4, e: [#d4cbb9, #c9d1d8][v]},
+      {k: 0, x: -0.12, y: 0, z: 0.32, w: 0.32, h: 0.2, d: 0.02, c: #5b6676},
+      {k: 0, x: 0.3, y: 0, z: 0.4, w: 0.12, h: 0.1, d: 0.12, c: #b08250},
+      {k: 0, x: 0.3, y: 0.1, z: 0.4, w: 0.09, h: 0.08, d: 0.09, c: #c49563}]})
+    + range(2).map(v => {p: [
+      {k: 0, x: -0.08, y: 0, z: 0, w: 0.66, h: 0.34, d: 0.72, c: [#c4b8a4, #b8c2c9][v], nt: true},
+      {k: 1, x: -0.08, y: 0.34, z: -0.24, w: 0.66, h: 0.12, d: 0.24, c: #7e8b99, e: [#c4b8a4, #b8c2c9][v]},
+      {k: 1, x: -0.08, y: 0.34, z: 0, w: 0.66, h: 0.12, d: 0.24, c: #7e8b99, e: [#c4b8a4, #b8c2c9][v]},
+      {k: 1, x: -0.08, y: 0.34, z: 0.24, w: 0.66, h: 0.12, d: 0.24, c: #7e8b99, e: [#c4b8a4, #b8c2c9][v]},
+      {k: 3, x: 0.34, y: 0, z: -0.22, r: 0.07, r2: 0.06, h: 0.36, n: 8, c: #b5503d, nt: true},
+      {k: 3, x: 0.34, y: 0.36, z: -0.22, r: 0.06, r2: 0.06, h: 0.08, n: 8, c: #f2f2f2, nt: true},
+      {k: 3, x: 0.34, y: 0.44, z: -0.22, r: 0.06, r2: 0.055, h: 0.14, n: 8, c: #b5503d, t: #3a3a3a},
+      {k: 0, x: 0.34, y: 0, z: 0.25, w: 0.14, h: 0.12, d: 0.2, c: #8b97a4}]})
+    + [{p: [
+      {k: 3, x: -0.22, y: 0, z: -0.18, r: 0.16, r2: 0.16, h: 0.5, n: 8, c: #dfe3e8, nt: true},
+      {k: 4, x: -0.22, y: 0.5, z: -0.18, r: 0.16, h: 0.1, n: 8, c: #b8c0ca},
+      {k: 3, x: 0.14, y: 0, z: -0.18, r: 0.16, r2: 0.16, h: 0.42, n: 8, c: #dfe3e8, nt: true},
+      {k: 4, x: 0.14, y: 0.42, z: -0.18, r: 0.16, h: 0.1, n: 8, c: #b8c0ca},
+      {k: 0, x: 0, y: 0, z: 0.24, w: 0.84, h: 0.26, d: 0.36, c: #c9bfae, t: #8f99a5},
+      {k: 3, x: 0.3, y: 0.26, z: 0.24, r: 0.05, r2: 0.04, h: 0.5, n: 8, c: #e8e8e8, t: #3a3a3a}]}]
+    // 22-32: the buildings, power plant to Bay Tower
+    + [
+      {p: [
+        {k: 0, x: -0.22, y: 0, z: 0, w: 0.48, h: 0.3, d: 0.8, c: #b9b1a3, t: #8a94a0},
+        {k: 0, x: -0.22, y: 0.3, z: 0.18, w: 0.2, h: 0.1, d: 0.2, c: #e8b23a},
+        {k: 3, x: 0.22, y: 0, z: -0.2, r: 0.19, r2: 0.12, h: 0.34, n: 8, c: #e6e3dd, nt: true},
+        {k: 3, x: 0.22, y: 0.34, z: -0.2, r: 0.12, r2: 0.15, h: 0.18, n: 8, c: #e6e3dd, t: #5d5a56},
+        {k: 3, x: 0.22, y: 0, z: 0.22, r: 0.19, r2: 0.12, h: 0.34, n: 8, c: #e6e3dd, nt: true},
+        {k: 3, x: 0.22, y: 0.34, z: 0.22, r: 0.12, r2: 0.15, h: 0.18, n: 8, c: #e6e3dd, t: #5d5a56}]},
+      {p: [
+        {k: 0, x: -0.13, y: 0, z: -0.13, w: 0.04, h: 0.42, d: 0.04, c: #7d8794},
+        {k: 0, x: 0.13, y: 0, z: -0.13, w: 0.04, h: 0.42, d: 0.04, c: #7d8794},
+        {k: 0, x: 0.13, y: 0, z: 0.13, w: 0.04, h: 0.42, d: 0.04, c: #7d8794},
+        {k: 0, x: -0.13, y: 0, z: 0.13, w: 0.04, h: 0.42, d: 0.04, c: #7d8794},
+        {k: 3, x: 0, y: 0.42, z: 0, r: 0.22, r2: 0.22, h: 0.24, n: 8, c: #5ab0e8, nt: true},
+        {k: 4, x: 0, y: 0.66, z: 0, r: 0.23, h: 0.12, n: 8, c: #3b86c8},
+        {k: 0, x: 0.3, y: 0, z: 0.3, w: 0.2, h: 0.14, d: 0.2, c: #e9e4da, t: #3b86c8}]},
+      {p: [
+        {k: 0, x: -0.25, y: 0, z: -0.2, w: 0.05, h: 0.1, d: 0.05, c: DOOR},
+        {k: 3, x: -0.25, y: 0.1, z: -0.2, r: 0.13, r2: 0.17, h: 0.1, n: 7, c: LEAF[0], nt: true},
+        {k: 3, x: -0.25, y: 0.2, z: -0.2, r: 0.17, r2: 0.07, h: 0.16, n: 7, c: LEAF[0], t: LEAF[2]},
+        {k: 0, x: 0.24, y: 0, z: 0.26, w: 0.05, h: 0.1, d: 0.05, c: DOOR},
+        {k: 3, x: 0.24, y: 0.1, z: 0.26, r: 0.11, r2: 0.15, h: 0.09, n: 7, c: LEAF[1], nt: true},
+        {k: 3, x: 0.24, y: 0.19, z: 0.26, r: 0.15, r2: 0.06, h: 0.14, n: 7, c: LEAF[1], t: LEAF[2]},
+        {k: 3, x: 0.2, y: 0, z: -0.2, r: 0.18, r2: 0.18, h: 0.02, n: 8, c: #4fb0dd},
+        {k: 0, x: -0.2, y: 0, z: 0.26, w: 0.22, h: 0.05, d: 0.07, c: #9b6b45},
+        {k: 0, x: -0.04, y: 0, z: 0.05, w: 0.06, h: 0.04, d: 0.06, c: #ee6fa8},
+        {k: 0, x: 0.06, y: 0, z: -0.02, w: 0.06, h: 0.04, d: 0.06, c: #f2d03a}]},
+      {p: [
+        {k: 0, x: -0.05, y: 0.38, z: 0, w: 0.1, h: 0.05, d: 0.08, c: #e33b3b},
+        {k: 0, x: 0.05, y: 0.38, z: 0, w: 0.1, h: 0.05, d: 0.08, c: #2f6fe3},
+        {k: 0, x: 0, y: 0, z: 0.29, w: 0.14, h: 0.16, d: 0.02, c: #2f5fb3}],
+        st: [{y: 0, f: 2, w: 0.7, d: 0.56, s: 0.06, b: 0.1, c: #f3f6fa, g: #9fc9ef, t: #2f5fb3}]},
+      {p: [
+        {k: 0, x: -0.08, y: 0, z: 0, w: 0.62, h: 0.36, d: 0.6, c: #d8453a, t: #9d3229},
+        {k: 0, x: -0.22, y: 0, z: 0.31, w: 0.22, h: 0.24, d: 0.02, c: #efe9e0},
+        {k: 0, x: 0.06, y: 0, z: 0.31, w: 0.22, h: 0.24, d: 0.02, c: #efe9e0},
+        {k: 0, x: 0.33, y: 0, z: -0.18, w: 0.18, h: 0.62, d: 0.18, c: #c23d33, t: #7a2a24}]},
+      {p: [
+        {k: 0, x: 0, y: 0.46, z: 0, w: 0.08, h: 0.02, d: 0.3, c: #e5413b},
+        {k: 0, x: -0.095, y: 0.46, z: 0, w: 0.11, h: 0.02, d: 0.08, c: #e5413b},
+        {k: 0, x: 0.095, y: 0.46, z: 0, w: 0.11, h: 0.02, d: 0.08, c: #e5413b},
+        {k: 0, x: 0, y: 0.16, z: 0.355, w: 0.26, h: 0.03, d: 0.09, c: #e5413b}],
+        st: [{y: 0, f: 2, w: 0.72, d: 0.62, s: 0.06, b: 0.14, c: #f7f8fa, g: #a8d8ef}]},
+      {p: [
+        {k: 0, x: -0.08, y: 0, z: 0, w: 0.62, h: 0.3, d: 0.52, c: #e0855a, cs: [#e0855a, #f0c6a4, #e0855a, #e0855a, #e0855a], nt: true},
+        {k: 1, x: -0.08, y: 0.3, z: 0, w: 0.66, h: 0.16, d: 0.58, c: #7c4a3a, e: #e0855a},
+        {k: 0, x: 0.33, y: 0, z: 0, w: 0.16, h: 0.46, d: 0.16, c: #f3e7cf, nt: true},
+        {k: 2, x: 0.33, y: 0.46, z: 0, w: 0.2, h: 0.14, d: 0.2, c: #7c4a3a},
+        {k: 0, x: -0.35, y: 0, z: 0.38, w: 0.02, h: 0.5, d: 0.02, c: #dddddd},
+        {k: 0, x: -0.29, y: 0.38, z: 0.38, w: 0.1, h: 0.07, d: 0.01, c: #e4574a}]},
+      {p: [
+        {k: 5, x: 0, y: 0, z: -0.28, w: 0.84, h: 0.12, d: 0.2, c: #2b4f8e, e: #9aa4ae},
+        {k: 5, x: 0, y: 0, z: 0, w: 0.84, h: 0.12, d: 0.2, c: #2b4f8e, e: #9aa4ae},
+        {k: 5, x: 0, y: 0, z: 0.28, w: 0.84, h: 0.12, d: 0.2, c: #2b4f8e, e: #9aa4ae}]},
+      {p: [
+        {k: 0, x: 0, y: 0, z: 0, w: 0.94, h: 0.02, d: 0.94, c: #e7dfcf},
+        {k: 3, x: 0, y: 0.02, z: 0, r: 0.24, r2: 0.24, h: 0.07, n: 8, c: #cfd5dc, t: #6cc6f0},
+        {k: 3, x: 0, y: 0.09, z: 0, r: 0.04, r2: 0.04, h: 0.18, n: 6, c: #cfd5dc, nt: true},
+        {k: 3, x: 0, y: 0.27, z: 0, r: 0.04, r2: 0.11, h: 0.05, n: 8, c: #cfd5dc, t: #6cc6f0},
+        {k: 0, x: -0.37, y: 0.02, z: -0.37, w: 0.14, h: 0.05, d: 0.14, c: #4f9a45, t: #ee6fa8},
+        {k: 0, x: 0.37, y: 0.02, z: -0.37, w: 0.14, h: 0.05, d: 0.14, c: #4f9a45, t: #f2d03a},
+        {k: 0, x: 0.37, y: 0.02, z: 0.37, w: 0.14, h: 0.05, d: 0.14, c: #4f9a45, t: #ee6fa8},
+        {k: 0, x: -0.37, y: 0.02, z: 0.37, w: 0.14, h: 0.05, d: 0.14, c: #4f9a45, t: #f2d03a}]},
+      {p: [
+        {k: 3, x: 0, y: 0, z: 0, r: 0.44, r2: 0.48, h: 0.2, n: 8, c: #f4f4f4, t: #56b553},
+        {k: 3, x: 0, y: 0.2, z: 0, r: 0.48, r2: 0.49, h: 0.05, n: 8, c: #e4574a, nt: true},
+        {k: 0, x: 0, y: 0.2, z: 0, w: 0.012, h: 0.004, d: 0.6, c: #ffffff},
+        {k: 0, x: -0.43, y: 0, z: -0.43, w: 0.03, h: 0.6, d: 0.03, c: #9aa3ad},
+        {k: 0, x: 0.43, y: 0, z: -0.43, w: 0.03, h: 0.6, d: 0.03, c: #9aa3ad},
+        {k: 0, x: 0.43, y: 0, z: 0.43, w: 0.03, h: 0.6, d: 0.03, c: #9aa3ad},
+        {k: 0, x: -0.43, y: 0, z: 0.43, w: 0.03, h: 0.6, d: 0.03, c: #9aa3ad},
+        {k: 0, x: -0.43, y: 0.6, z: -0.43, w: 0.1, h: 0.04, d: 0.1, c: #fff2b0},
+        {k: 0, x: 0.43, y: 0.6, z: -0.43, w: 0.1, h: 0.04, d: 0.1, c: #fff2b0},
+        {k: 0, x: 0.43, y: 0.6, z: 0.43, w: 0.1, h: 0.04, d: 0.1, c: #fff2b0},
+        {k: 0, x: -0.43, y: 0.6, z: 0.43, w: 0.1, h: 0.04, d: 0.1, c: #fff2b0}]},
+      {p: [
+        {k: 3, x: 0, y: 0, z: 0, r: 0.38, r2: 0.3, h: 0.1, n: 8, c: #e9e3d6},
+        {k: 3, x: 0, y: 0.1, z: 0, r: 0.09, r2: 0.06, h: 1.5, n: 8, c: #f4f1ea, nt: true},
+        {k: 3, x: 0, y: 1.6, z: 0, r: 0.06, r2: 0.3, h: 0.12, n: 8, c: #d9d2c4, nt: true},
+        {k: 3, x: 0, y: 1.72, z: 0, r: 0.3, r2: 0.3, h: 0.1, n: 8, c: #5aaee6, nt: true},
+        {k: 3, x: 0, y: 1.82, z: 0, r: 0.3, r2: 0.12, h: 0.1, n: 8, c: #d9d2c4},
+        {k: 4, x: 0, y: 1.92, z: 0, r: 0.05, h: 0.6, n: 6, c: #ffc94a}]}
+    ]
+    // 33-36: woods, a few trees to a tile
+    + [[[-0.2, -0.15, 0], [0.2, 0.18, 1]], [[-0.22, 0.2, 1], [0.18, -0.2, 1], [0.26, 0.26, 0]], [[0, 0, 2]], [[-0.24, -0.2, 1], [0.22, -0.1, 1], [-0.05, 0.25, 1]]].map(TS => {p: flatten(TS.map(T => T[2] == 1 ? [
+        {k: 0, x: T[0], y: 0, z: T[1], w: 0.05, h: 0.08, d: 0.05, c: DOOR},
+        {k: 4, x: T[0], y: 0.08, z: T[1], r: 0.15, h: 0.36, n: 7, c: #3f8f4f}]
+      : [[T[2] == 2 ? 1.4 : 1]].map(S => [
+        {k: 0, x: T[0], y: 0, z: T[1], w: 0.05, h: 0.1 * S[0], d: 0.05, c: DOOR},
+        {k: 3, x: T[0], y: 0.1 * S[0], z: T[1], r: 0.13 * S[0], r2: 0.17 * S[0], h: 0.1 * S[0], n: 7, c: LEAF[0], nt: true},
+        {k: 3, x: T[0], y: 0.2 * S[0], z: T[1], r: 0.17 * S[0], r2: 0.07 * S[0], h: 0.16 * S[0], n: 7, c: LEAF[0], t: LEAF[2]}])[0]))})
+    // 37-41: cars; 42: a sailing boat; 43: a cloud
+    + CARC.map(C => {p: [
+      {k: 0, x: 0, y: 0, z: 0, w: 0.15, h: 0.07, d: 0.3, c: C},
+      {k: 0, x: 0, y: 0.07, z: -0.02, w: 0.13, h: 0.055, d: 0.15, c: #dcecf7, t: C}]})
+    + [{p: [
+      {k: 0, x: 0, y: -0.02, z: 0, w: 0.14, h: 0.06, d: 0.34, c: #f4f4f4, t: #c9925a},
+      {k: 1, x: 0, y: 0.04, z: -0.02, w: 0.01, h: 0.3, d: 0.24, c: #ffffff, e: #ffffff}]}]
+    + [{p: [
+      {k: 0, x: 0, y: 0, z: 0, w: 1.2, h: 0.36, d: 0.8, c: #ffffff},
+      {k: 0, x: 0.1, y: 0.36, z: -0.05, w: 0.62, h: 0.28, d: 0.5, c: #ffffff},
+      {k: 0, x: 0.85, y: 0, z: 0.05, w: 0.5, h: 0.26, d: 0.56, c: #ffffff},
+      {k: 0, x: -0.8, y: 0, z: -0.05, w: 0.4, h: 0.2, d: 0.44, c: #ffffff}]}]
+    // 44-46: a sign on an empty lot, in its zone's color
+    + [#5cc96b, #4a9be8, #f2b134].map(C => {p: [
+      {k: 0, x: 0.28, y: 0, z: 0.28, w: 0.025, h: 0.12, d: 0.025, c: #8a6a4a},
+      {k: 0, x: 0.28, y: 0.12, z: 0.28, w: 0.2, h: 0.12, d: 0.025, c: C, cs: [#ffffff, C, C, C, C]}]})
+    // 47-48: snowy pines; 49-50: cacti and rocks
+    + [[[-0.2, -0.15], [0.2, 0.18]], [[-0.22, 0.2], [0.18, -0.2], [0.22, 0.25]]].map(TS => {p: flatten(TS.map(T => [
+      {k: 0, x: T[0], y: 0, z: T[1], w: 0.05, h: 0.07, d: 0.05, c: DOOR},
+      {k: 3, x: T[0], y: 0.07, z: T[1], r: 0.15, r2: 0.07, h: 0.22, n: 7, c: #3d7f55, nt: true},
+      {k: 4, x: T[0], y: 0.29, z: T[1], r: 0.07, h: 0.12, n: 7, c: #f4f8fb}]))})
+    + [[[-0.2, -0.15, 0.42], [0.18, 0.2, 0.32]], [[0, 0, 0.48], [0.25, -0.2, 0.28]]].map(TS => {p: [{k: 0, x: -0.24, y: 0, z: 0.26, w: 0.12, h: 0.05, d: 0.09, c: #c9a77a}] + flatten(TS.map(T => [
+      {k: 0, x: T[0], y: 0, z: T[1], w: 0.09, h: T[2], d: 0.09, c: #5a9e4c, t: #6cb35a},
+      {k: 0, x: T[0] - 0.07, y: T[2] * 0.4, z: T[1], w: 0.05, h: 0.05, d: 0.05, c: #5a9e4c},
+      {k: 0, x: T[0] - 0.08, y: T[2] * 0.4 + 0.05, z: T[1], w: 0.03, h: 0.09, d: 0.04, c: #5a9e4c, t: #6cb35a},
+      {k: 0, x: T[0] + 0.07, y: T[2] * 0.55, z: T[1], w: 0.05, h: 0.05, d: 0.05, c: #5a9e4c},
+      {k: 0, x: T[0] + 0.08, y: T[2] * 0.55 + 0.05, z: T[1], w: 0.03, h: 0.07, d: 0.04, c: #5a9e4c, t: #6cb35a}]))})
+    // 51 a battery yard, 52 a research lab, 53 a launch pad, 54 a rocket
+    + [{p: [
+      {k: 0, x: -0.27, y: 0, z: -0.05, w: 0.22, h: 0.3, d: 0.62, c: #eef2f5, t: #2fd0b4},
+      {k: 0, x: 0, y: 0, z: -0.05, w: 0.22, h: 0.3, d: 0.62, c: #eef2f5, t: #2fd0b4},
+      {k: 0, x: 0.27, y: 0, z: -0.05, w: 0.22, h: 0.3, d: 0.62, c: #eef2f5, t: #2fd0b4},
+      {k: 0, x: 0.3, y: 0, z: 0.38, w: 0.16, h: 0.14, d: 0.12, c: #8b97a4},
+      {k: 0, x: -0.2, y: 0, z: 0.38, w: 0.24, h: 0.08, d: 0.1, c: #ffc84a}]},
+      {p: [
+      {k: 3, x: 0.12, y: 0.42, z: 0, r: 0.17, r2: 0.13, h: 0.08, n: 8, c: #e8e6ef, nt: true},
+      {k: 3, x: 0.12, y: 0.5, z: 0, r: 0.13, r2: 0.05, h: 0.09, n: 8, c: #e8e6ef},
+      {k: 0, x: -0.2, y: 0.42, z: -0.12, w: 0.03, h: 0.3, d: 0.03, c: #c9ced6},
+      {k: 0, x: -0.2, y: 0.72, z: -0.12, w: 0.12, h: 0.02, d: 0.12, c: #c9ced6},
+      {k: 0, x: 0, y: 0, z: 0.3, w: 0.16, h: 0.16, d: 0.02, c: #9b7be0}],
+      st: [{y: 0, f: 2, w: 0.66, d: 0.56, s: 0.06, b: 0.12, c: #f2f0f7, g: #b6a2ec}]},
+      {p: [
+      {k: 0, x: 0, y: 0, z: 0, w: 0.94, h: 0.06, d: 0.94, c: #c9c6bf, t: #b5b2ab},
+      {k: 0, x: 0, y: 0.06, z: 0.3, w: 0.24, h: 0.005, d: 0.3, c: #3a3a3a},
+      {k: 0, x: 0.3, y: 0.06, z: -0.05, w: 0.12, h: 1, d: 0.12, c: #e4574a, t: #b5402f},
+      {k: 0, x: 0.19, y: 0.8, z: -0.05, w: 0.1, h: 0.04, d: 0.04, c: #e4574a},
+      {k: 3, x: -0.3, y: 0.06, z: -0.3, r: 0.1, r2: 0.1, h: 0.25, n: 8, c: #f4f4f4},
+      {k: 3, x: -0.3, y: 0.06, z: 0.05, r: 0.08, r2: 0.08, h: 0.2, n: 8, c: #f4f4f4}]},
+      {p: [
+      {k: 3, x: 0, y: 0, z: 0, r: 0.09, r2: 0.09, h: 0.62, n: 8, c: #f4f4f4, nt: true},
+      {k: 3, x: 0, y: 0.62, z: 0, r: 0.09, r2: 0.09, h: 0.06, n: 8, c: #22304d, nt: true},
+      {k: 3, x: 0, y: 0.68, z: 0, r: 0.09, r2: 0.08, h: 0.12, n: 8, c: #f4f4f4, nt: true},
+      {k: 4, x: 0, y: 0.8, z: 0, r: 0.08, h: 0.22, n: 8, c: #e4574a},
+      {k: 0, x: 0.12, y: 0, z: 0, w: 0.06, h: 0.16, d: 0.02, c: #e4574a},
+      {k: 0, x: -0.12, y: 0, z: 0, w: 0.06, h: 0.16, d: 0.02, c: #e4574a},
+      {k: 0, x: 0, y: 0, z: 0.12, w: 0.02, h: 0.16, d: 0.06, c: #e4574a},
+      {k: 0, x: 0, y: 0, z: -0.12, w: 0.02, h: 0.16, d: 0.06, c: #e4574a}]}]
+    // 55 a bus depot, 56 a bus stop, 57 a subway entrance, 58 a bus
+    + [{p: [
+      {k: 0, x: 0, y: 0, z: -0.1, w: 0.86, h: 0.3, d: 0.6, c: #e9e4da, t: #8b97a4},
+      {k: 0, x: -0.26, y: 0, z: 0.205, w: 0.2, h: 0.22, d: 0.01, c: #5b6676},
+      {k: 0, x: 0, y: 0, z: 0.205, w: 0.2, h: 0.22, d: 0.01, c: #5b6676},
+      {k: 0, x: 0.26, y: 0, z: 0.205, w: 0.2, h: 0.22, d: 0.01, c: #5b6676},
+      {k: 0, x: 0, y: 0.3, z: 0.08, w: 0.5, h: 0.08, d: 0.03, c: #f2b134, cs: [#f2b134, #22304d, #f2b134, #f2b134, #f2b134]},
+      {k: 0, x: 0.2, y: 0, z: 0.36, w: 0.3, h: 0.11, d: 0.12, c: #f2b134, t: #f7e3a8}]},
+      {p: [
+      {k: 0, x: 0, y: 0.014, z: 0.31, w: 0.6, h: 0.004, d: 0.07, c: #f2b134},
+      {k: 0, x: 0, y: 0, z: 0.485, w: 0.36, h: 0.22, d: 0.02, c: #bfe3f5},
+      {k: 0, x: 0, y: 0.22, z: 0.44, w: 0.4, h: 0.03, d: 0.11, c: #f2b134, t: #f7e3a8},
+      {k: 0, x: 0, y: 0, z: 0.445, w: 0.22, h: 0.045, d: 0.05, c: #8a6a4a},
+      {k: 0, x: -0.27, y: 0, z: 0.4, w: 0.02, h: 0.26, d: 0.02, c: #8b97a4},
+      {k: 0, x: -0.27, y: 0.26, z: 0.4, w: 0.09, h: 0.09, d: 0.02, c: #f2b134, cs: [#f2b134, #22304d, #f2b134, #f2b134, #f2b134]}]},
+      {p: [
+      {k: 0, x: 0, y: 0, z: 0, w: 0.9, h: 0.02, d: 0.9, c: #d9dde3},
+      {k: 0, x: 0, y: 0.02, z: 0.05, w: 0.44, h: 0.16, d: 0.36, c: #3d7fd0, t: #8fd0f2},
+      {k: 0, x: 0, y: 0.02, z: 0.3, w: 0.3, h: 0.02, d: 0.14, c: #3a3a3a},
+      {k: 0, x: 0.34, y: 0.02, z: 0.34, w: 0.03, h: 0.42, d: 0.03, c: #8b97a4},
+      {k: 0, x: 0.34, y: 0.44, z: 0.34, w: 0.14, h: 0.14, d: 0.03, c: #3d7fd0, cs: [#3d7fd0, #ffffff, #3d7fd0, #3d7fd0, #3d7fd0]}]},
+      {p: [
+      {k: 0, x: 0, y: 0, z: 0, w: 0.17, h: 0.06, d: 0.46, c: #f2b134},
+      {k: 0, x: 0, y: 0.06, z: 0, w: 0.17, h: 0.06, d: 0.46, c: #9fd3ee, t: #f2b134},
+      {k: 0, x: 0, y: 0.12, z: 0, w: 0.17, h: 0.02, d: 0.46, c: #f2b134, t: #f7e3a8}]}]
+    // 59 a for-sale sign
+    + [{p: [
+      {k: 0, x: -0.18, y: 0, z: 0, w: 0.04, h: 0.42, d: 0.04, c: #8a6a4a},
+      {k: 0, x: 0.18, y: 0, z: 0, w: 0.04, h: 0.42, d: 0.04, c: #8a6a4a},
+      {k: 0, x: 0, y: 0.24, z: 0, w: 0.5, h: 0.24, d: 0.04, c: #ffc84a, cs: [#ffc84a, #fff6e3, #ffc84a, #ffc84a, #ffc84a]},
+      {k: 0, x: 0, y: 0.31, z: 0.025, w: 0.3, h: 0.04, d: 0.01, c: #e4574a},
+      {k: 0, x: 0, y: 0.38, z: 0.025, w: 0.22, h: 0.03, d: 0.01, c: #22304d}]}]
+  let MS = DES.map(D => [D.p + flatten((D.st ?? []).map(S => flatten(range(S.f).map(i => [
+        {k: 0, x: 0, y: S.y + i * (S.s + S.b), z: 0, w: S.w, h: S.s, d: S.d, c: S.c},
+        {k: 0, x: 0, y: S.y + i * (S.s + S.b) + S.s, z: 0, w: S.w - 0.04, h: S.b, d: S.d - 0.04, c: S.g, nt: true}
+      ])) + [{k: 0, x: 0, y: S.y + S.f * (S.s + S.b), z: 0, w: S.w, h: S.s, d: S.d, c: S.c, t: S.t, nt: S.nt}]))]
+    // (A box only gets the faces that show: a flat one its top, a thin one its two broad sides, a pole its four
+    // sides; every face is triangles the scene works through on each frame the view moves.)
+    .map(P => reduce(P.map(q => q.k == 0 ? [q.h <= 0.03 ? [0] : q.w <= 0.05 && q.d <= 0.05 ? [1, 2, 3, 4] : q.d <= 0.03 ? [1, 2] : q.w <= 0.03 ? [3, 4] : q.nt ? [1, 2, 3, 4] : [0, 1, 2, 3, 4]].map(FI => {p: CORN.map(o => [q.x + o[0] * q.w, q.y + o[1] * q.h, q.z + o[2] * q.d]), f: FI.map(i => BF[i]), c: [q.cs ?? [q.t ?? q.c, q.c, q.c, q.c, q.c]].map(L => FI.map(i => L[i]))[0]})[0]
+      : q.k == 1 ? {p: [[q.x - q.w / 2, q.y, q.z - q.d / 2], [q.x + q.w / 2, q.y, q.z - q.d / 2], [q.x + q.w / 2, q.y, q.z + q.d / 2], [q.x - q.w / 2, q.y, q.z + q.d / 2], [q.x - q.w / 2, q.y + q.h, q.z], [q.x + q.w / 2, q.y + q.h, q.z]], f: [[3, 2, 5, 4], [1, 0, 4, 5], [2, 1, 5], [0, 3, 4]], c: [q.c, q.c, q.e ?? q.c, q.e ?? q.c]}
+      : q.k == 2 ? {p: [[q.x - q.w / 2, q.y, q.z - q.d / 2], [q.x + q.w / 2, q.y, q.z - q.d / 2], [q.x + q.w / 2, q.y, q.z + q.d / 2], [q.x - q.w / 2, q.y, q.z + q.d / 2], [q.x, q.y + q.h, q.z]], f: [[3, 2, 4], [1, 0, 4], [2, 1, 4], [0, 3, 4]], c: [q.c, q.c, q.c, q.c]}
+      : q.k == 3 ? {p: range(q.n).map(i => [q.x + cos(2 * pi * i / q.n) * q.r, q.y, q.z + sin(2 * pi * i / q.n) * q.r]) + range(q.n).map(i => [q.x + cos(2 * pi * i / q.n) * (q.r2 ?? q.r), q.y + q.h, q.z + sin(2 * pi * i / q.n) * (q.r2 ?? q.r)]),
+          f: range(q.n).map(i => [(i + 1) % q.n, i, q.n + i, q.n + (i + 1) % q.n]) + (q.nt ? [] : [reverse(range(q.n)).map(i => q.n + i)]), c: range(q.n).map(i => q.c) + (q.nt ? [] : [q.t ?? q.c])}
+      : q.k == 4 ? {p: range(q.n).map(i => [q.x + cos(2 * pi * i / q.n) * q.r, q.y, q.z + sin(2 * pi * i / q.n) * q.r]) + [[q.x, q.y + q.h, q.z]], f: range(q.n).map(i => [(i + 1) % q.n, i, q.n]), c: range(q.n).map(i => q.c)}
+      : {p: [[q.x - q.w / 2, q.y, q.z + q.d / 2], [q.x + q.w / 2, q.y, q.z + q.d / 2], [q.x + q.w / 2, q.y + q.h, q.z - q.d / 2], [q.x - q.w / 2, q.y + q.h, q.z - q.d / 2], [q.x - q.w / 2, q.y, q.z - q.d / 2], [q.x + q.w / 2, q.y, q.z - q.d / 2]], f: [[0, 1, 2, 3], [5, 4, 3, 2], [1, 5, 2], [4, 0, 3]], c: [q.c, q.e, q.e, q.e]}),
+      (A, r) => {p: A.p + r.p, f: A.f + r.f.map(f => f.map(i => i + len(A.p))), c: A.c + r.c}, {p: [], f: [], c: []}))
+    .map(A => mesh(A.p, A.f, A.c))[0])
+  let RI = [[0, 1, 2, 3], [4, 5, 6], [7, 8, 9]]
+  let CI = [[10, 11, 12], [13, 14], [15, 16]]
+  let II = [[17, 18], [19, 20], [21]]
+  let PLN = plane(1)
+  let SUBQ = flatten(range(NN).filter(c => SUBL[c] == 1).map(c => [[WX[c] - 0.17, WZ[c] - 0.17, WX[c] + 0.17, WZ[c] + 0.17]]
+    + (NB4[c][0] >= 0 && SUBT[NB4[c][0]] ? [[WX[c] - 0.12, WZ[c] - 0.5, WX[c] + 0.12, WZ[c] - 0.17]] : [])
+    + (NB4[c][1] >= 0 && SUBT[NB4[c][1]] ? [[WX[c] - 0.12, WZ[c] + 0.17, WX[c] + 0.12, WZ[c] + 0.5]] : [])
+    + (NB4[c][2] >= 0 && SUBT[NB4[c][2]] ? [[WX[c] - 0.5, WZ[c] - 0.12, WX[c] - 0.17, WZ[c] + 0.12]] : [])
+    + (NB4[c][3] >= 0 && SUBT[NB4[c][3]] ? [[WX[c] + 0.17, WZ[c] - 0.12, WX[c] + 0.5, WZ[c] + 0.12]] : [])))
+  let SUBM = chunk(SUBQ, 240).map(Q => mesh(flatten(Q.map(q => [[q[0], 0.07, q[1]], [q[0], 0.07, q[3]], [q[2], 0.07, q[3]], [q[2], 0.07, q[1]]])), range(len(Q)).map(i => [4 * i, 4 * i + 1, 4 * i + 2, 4 * i + 3])))
+  // a flat disc one unit round, for a service's reach on the ground (its color comes from the model)
+  let DISC = mesh([[0, 0, 0]] + range(32).map(i => [cos(2 * pi * i / 32), 0, sin(2 * pi * i / 32)]), range(32).map(i => [0, 1 + (i + 1) % 32, 1 + i]))
+  let PUFF = sphere(6)
+
+  // ---- the ground and what lies on it -------------------------------------------------------------------------
+  // (While a service is being placed, the map shows that service.)
+  let EOV = tool >= 13 && tool <= 16 ? tool - 13 : tool == 24 || tool == 25 ? 5 : tool == 8 || tool == 26 ? 6 : ov
+  let HEAT = EOV < 0 ? [] : EOV == 4 ? range(NN).map(c => GG[c] >= 2 && GG[c] <= 4 ? clamp((LVAL[c] - 0.5) / 4, 0, 1) : -1)
+    : EOV == 5 ? range(NN).map(c => GG[c] >= 2 && GG[c] <= 4 ? 1 - TRAF[c] : -1)
+    : EOV == 6 ? range(NN).map(c => SUBC[c] ? 1 : any(STAS, s => CX[s] - CX[c] <= 4 && CX[c] - CX[s] <= 4 && CZ[s] - CZ[c] <= 4 && CZ[c] - CZ[s] <= 4) ? 0.5 : -1)
+    : range(NN).map(c => len(SVP[EOV]) == 0 ? 0 : [sqrt(min(SVP[EOV].map(s => (CX[s] - CX[c]) * (CX[s] - CX[c]) + (CZ[s] - CZ[c]) * (CZ[s] - CZ[c]))))].map(d => d <= 3 ? 1 : max(0.2, 1 - (d - 3) * 0.08))[0])
+  let HOT = [#e4574a, #f2c43a, #4cc76a]
+  // Water tiles let the one sea below show through, so the bay, rivers and the open sea are all the same water; only
+  // the shallows along a coast are tinted, and see-through too.
+  let WCLEAR = alpha(#3f9fd8, 0)
+  let WSHORE = alpha(#7fd6e6, 0.55)
+  let GCOL0 = range(N).map(i => range(N).map(j => [i * N + j].map(c => [GG[c]].map(k => EOV >= 0 && k != 6 && k != 7 && k != 1 ? (HEAT[c] < 0 ? #d9dcd2 : HEAT[c] < 0.5 ? mix(HOT[0], HOT[1], HEAT[c] * 2) : mix(HOT[1], HOT[2], HEAT[c] * 2 - 1)) : k == 6 ? (SHORE[c] ? WSHORE : WCLEAR)
+    : k == 7 ? MP.bc[(i + j) % 2]
+    : k == 1 ? (TER[c] == 6 ? (SHORE[c] ? WSHORE : WCLEAR) : #5f6675)
+    : k == 2 ? #bfeb98 : k == 3 ? #c4d6ea : k == 4 ? #ecdba4
+    : k == 12 ? #74c95c : k == 18 ? #e7dfcf : k >= 10 ? #d4d9df
+    : k == 5 ? MP.wc[(i + j) % 2]
+    : MP.tc[(i + j) % 2])[0])[0]))
+  let GCOL = range(N).map(i => range(N).map(j => [i * N + j].map(c => OWNED[c] || TER[c] == 6 ? GCOL0[i][j] : mix(GCOL0[i][j], #4d5866, 0.42))[0]))
+  let GROUND = terrain(HT, GCOL)
+  // road markings: a kerb where a road ends or runs past, a dashed middle on straight runs, at bridge height on water
+  let SIDE = #d2d6dd
+  let DASHC = #f6efd8
+  // the highway's height: a bridge over the sea when the coast doesn't reach the grid's edge
+  let HWY = mapv >= 1 && TER[HC] == 6 ? 0.05 : 0
+  let RDQ = flatten(range(NN).filter(c => GG[c] == 1).map(c => [{nb: [NB4[c][0], NB4[c][1], c == HC ? HC : NB4[c][2], NB4[c][3]].map(n => n >= 0 && GG[n] == 1), x: WX[c], z: WZ[c], y: TER[c] == 6 ? 0.062 : 0.012}].map(R =>
+      (R.nb[0] ? [] : [[R.x - 0.5, R.z - 0.5, R.x + 0.5, R.z - 0.36, SIDE, R.y]])
+    + (R.nb[1] ? [] : [[R.x - 0.5, R.z + 0.36, R.x + 0.5, R.z + 0.5, SIDE, R.y]])
+    + (R.nb[2] ? [] : [[R.x - 0.5, R.z - 0.5, R.x - 0.36, R.z + 0.5, SIDE, R.y]])
+    + (R.nb[3] ? [] : [[R.x + 0.36, R.z - 0.5, R.x + 0.5, R.z + 0.5, SIDE, R.y]])
+    + ((R.nb[2] || R.nb[3]) && !R.nb[0] && !R.nb[1] ? [[R.x - 0.2, R.z - 0.03, R.x + 0.2, R.z + 0.03, DASHC, R.y]] : [])
+    + ((R.nb[0] || R.nb[1]) && !R.nb[2] && !R.nb[3] ? [[R.x - 0.03, R.z - 0.2, R.x + 0.03, R.z + 0.2, DASHC, R.y]] : []))[0]))
+    + range(15).map(i => [-25.8 + i, 0.47, -25.4 + i, 0.53, DASHC, HWY > 0 ? 0.062 : 0.012]) + [[-26, 0, -11, 0.09, SIDE, HWY > 0 ? 0.062 : 0.012], [-26, 0.91, -11, 1, SIDE, HWY > 0 ? 0.062 : 0.012]]
+  let DECALS = chunk(RDQ, 240).map(Q => mesh(flatten(Q.map(q => [[q[0], q[5], q[1]], [q[0], q[5], q[3]], [q[2], q[5], q[3]], [q[2], q[5], q[1]]])), range(len(Q)).map(i => [4 * i, 4 * i + 1, 4 * i + 2, 4 * i + 3]), Q.map(q => q[4])))
+  // bridge decks over water, and the highway's causeway in from the sea
+  let ROADC = #5f6675
+  let DECKC = #c9c3b6
+  let DECKQ = [{p: [[-26, HWY, 0], [-26, HWY, 1], [-11, HWY, 1], [-11, HWY, 0]], c: ROADC}, {p: [[-11, -0.4, 0], [-26, -0.4, 0], [-26, HWY, 0], [-11, HWY, 0]], c: DECKC}, {p: [[-26, -0.4, 1], [-11, -0.4, 1], [-11, HWY, 1], [-26, HWY, 1]], c: DECKC}]
+    + flatten(range(NN).filter(c => GG[c] == 1 && TER[c] == 6).map(c => [{x0: WX[c] - 0.5, x1: WX[c] + 0.5, z0: WZ[c] - 0.5, z1: WZ[c] + 0.5, nb: NB4[c].map(n => n >= 0 && GG[n] == 1)}].map(B => [{p: [[B.x0, 0.05, B.z0], [B.x0, 0.05, B.z1], [B.x1, 0.05, B.z1], [B.x1, 0.05, B.z0]], c: ROADC}]
+      + (B.nb[0] ? [] : [{p: [[B.x1, -0.36, B.z0], [B.x0, -0.36, B.z0], [B.x0, 0.05, B.z0], [B.x1, 0.05, B.z0]], c: DECKC}])
+      + (B.nb[1] ? [] : [{p: [[B.x0, -0.36, B.z1], [B.x1, -0.36, B.z1], [B.x1, 0.05, B.z1], [B.x0, 0.05, B.z1]], c: DECKC}])
+      + (B.nb[2] ? [] : [{p: [[B.x0, -0.36, B.z0], [B.x0, -0.36, B.z1], [B.x0, 0.05, B.z1], [B.x0, 0.05, B.z0]], c: DECKC}])
+      + (B.nb[3] ? [] : [{p: [[B.x1, -0.36, B.z1], [B.x1, -0.36, B.z0], [B.x1, 0.05, B.z0], [B.x1, 0.05, B.z1]], c: DECKC}]))[0]))
+  let DECKS = chunk(DECKQ, 240).map(Q => mesh(flatten(Q.map(q => q.p)), range(len(Q)).map(i => [4 * i, 4 * i + 1, 4 * i + 2, 4 * i + 3]), Q.map(q => q.c)))
+
+  // ---- what stands on the tiles ----------------------------------------------------------------------------------
+  // a building faces its road; trees and lone buildings turn by chance
+  let ROT = range(NN).map(c => [NB4[c]].map(q => q[1] >= 0 && GG[q[1]] == 1 ? 0 : q[3] >= 0 && GG[q[3]] == 1 ? 90 : q[0] >= 0 && GG[q[0]] == 1 ? 180 : q[2] >= 0 && GG[q[2]] == 1 ? 270 : floor(hash(c, 2) * 4) * 90)[0])
+  let MIX = range(NN).map(c => [{k: GG[c], l: LV[c], h: hash(c, 8)}].map(q => q.k == 2 && q.l > 0 ? RI[q.l - 1][floor(q.h * len(RI[q.l - 1]))]
+    : q.k == 3 && q.l > 0 ? CI[q.l - 1][floor(q.h * len(CI[q.l - 1]))]
+    : q.k == 4 && q.l > 0 ? II[q.l - 1][floor(q.h * len(II[q.l - 1]))]
+    : q.k >= 2 && q.k <= 4 ? 42 + q.k : q.k >= 24 ? 31 + q.k : q.k >= 21 ? 30 + q.k : q.k >= 10 ? 12 + q.k : q.k == 5 ? MP.tree[floor(q.h * 4)] : -1)[0])
+  // where a sign says a parcel can be bought: its land tile nearest its middle
+  let SALE = range(NPAR).filter(q => BUYABLE[q]).map(q => first(range(NN).filter(c => PAR[c] == q && TER[c] == 0 && GG[c] != 1).sortBy(c => (CX[c] + 0.5 - PMID[q % NPX]) * (CX[c] + 0.5 - PMID[q % NPX]) + (CZ[c] + 0.5 - PMID[floor(q / NPX)]) * (CZ[c] + 0.5 - PMID[floor(q / NPX)]))) ?? -1).filter(c => c >= 0)
+  let FC = fresh.map(f => f.c)
+  let OBJ = range(NN).filter(c => MIX[c] >= 0 && !any(FC, q => q == c)).map(c => {m: MS[MIX[c]], at: [WX[c], 0, WZ[c]], t: [0, ROT[c], 0]})
+  let FRL = fresh.filter(f => MIX[f.c] >= 0).map(f => {m: MIX[f.c], at: [WX[f.c], 0, WZ[f.c]], r: ROT[f.c], t: f.t})
+  // The lots round one that's rising, drawn again with it over the city, so the ones in front still hide it: what
+  // rises is drawn in a scene of its own after the buildings, which stay still and cost nothing to draw again.
+  let FNB = unique(flatten(FC.map(c => range(9).map(i => c + (floor(i / 3) - 1) * N + i % 3 - 1).filter(n => n >= 0 && n < NN && abs(CX[n] - CX[c]) <= 1))))
+    .filter(n => MIX[n] >= 0 && !any(FC, q => q == n)).map(c => {m: MS[MIX[c]], at: [WX[c], 0, WZ[c]], t: [0, ROT[c], 0]})
+  // chimney tops: [x, y, z, phase], turned with their building
+  let STK = flatten(range(NN).filter(c => GG[c] == 4 && LV[c] >= 2).take(6).map(c => (LV[c] == 2 ? [[0.34, 0.58, -0.22]] : [[0.3, 0.76, 0.24]])
+    .map(o => [rad(ROT[c])].map(a => [WX[c] + o[0] * cos(a) + o[2] * sin(a), o[1], WZ[c] - o[0] * sin(a) + o[2] * cos(a), hash(c, o[2])])[0])))
+  // Cars: each walks the roads from a tile picked by hash, never turning straight back unless the road ends, and
+  // drives there and back along it. A third come in off the highway.
+  // (Routes for all 16 are walked when the roads change; how many drive grows with the city.)
+  // launch pads, and their rockets: a launch costs fuel, the customer pays when the satellite is up, and the next
+  // rocket stands ready 3 minutes after
+  let PADS = SPOS.filter(c => GG[c] == 23)
+  let LCOST = HAS[7] ? 4000 : 8000
+  let LREW = round((12000 + 2000 * CL) * (HAS[7] ? 1.5 : 1))
+  let LREADY = (now ?? 0) >= lastL + 180
+  let NCAR = len(RR) < 3 ? 0 : min(16, 2 + floor((POP + JOBS) / 45))
+  let CRP = (len(RR) < 3 ? [] : range(16)).map(k => [reduce(range(26), (A, s) => [NB4[last(A.p)].filter(n => n >= 0 && reach[n] && n != A.v)].map(op => len(op) == 0 ? {p: A.p + [A.v], v: last(A.p)} : {p: A.p + [op[floor(hash(k, s, 3) * len(op))]], v: last(A.p)})[0], {p: [k % 3 == 0 ? HC : RR[floor(hash(k, 9) * len(RR))]], v: -1}).p.filter(c => c >= 0)]
+    .map(P => (k % 3 == 0 ? range(14).map(i => [-24.5 + i, HWY + 0.012, 0.5]) : []) + P.map(c => [WX[c], TER[c] == 6 ? 0.062 : 0.012, WZ[c]]))[0])
+  // boats sail the deep water the same way
+  let DEEP = WCELLS.filter(c => !SHORE[c])
+  let BOATS = len(DEEP) < 4 ? [] : range(2).map(k => reduce(range(30), (A, s) => [NB4[last(A.p)].filter(n => n >= 0 && TER[n] == 6 && !SHORE[n] && n != A.v)].map(op => len(op) == 0 ? {p: A.p + [A.v], v: last(A.p)} : {p: A.p + [op[floor(hash(k, s, 13) * len(op))]], v: last(A.p)})[0], {p: [DEEP[floor(hash(k, 21) * len(DEEP))]], v: -1}).p.filter(c => c >= 0).map(c => [WX[c], -0.3, WZ[c]]))
+  // warnings over lots that can't grow, at most a few of each
+  // [tile, what's missing: 0 a road, 1 power, 2 water]
+  let WARN = ZC.filter(c => !conn[c]).take(3).map(c => [c, 0]) + ZC.filter(c => conn[c] && !pw[c]).take(3).map(c => [c, 1]) + (CL >= 2 ? ZC.filter(c => conn[c] && pw[c] && LV[c] > 0 && !wt[c]).take(4).map(c => [c, 2]) : [])
+
+  // ---- painting roads and zones -----------------------------------------------------------------------------------
+  let PDX = pa >= 0 && pb >= 0 ? CX[pb] - CX[pa] : 0
+  let PDZ = pa >= 0 && pb >= 0 ? CZ[pb] - CZ[pa] : 0
+  let HFIRST = abs(PDX) >= abs(PDZ)
+  // roads go along, then across; zones and the bulldozer take the rectangle
+  let PCELLS = pa < 0 || pb < 0 ? [] : tool == 1 || tool == 8 ? (HFIRST ? range(abs(PDX) + 1).map(i => CZ[pa] * N + CX[pa] + i * sign(PDX)) + range(1, abs(PDZ) + 1).map(j => (CZ[pa] + j * sign(PDZ)) * N + CX[pb])
+      : range(abs(PDZ) + 1).map(j => (CZ[pa] + j * sign(PDZ)) * N + CX[pa]) + range(1, abs(PDX) + 1).map(i => CZ[pb] * N + CX[pa] + i * sign(PDX)))
+    : flatten(range(min(CZ[pa], CZ[pb]), max(CZ[pa], CZ[pb]) + 1).map(z => range(min(CX[pa], CX[pb]), max(CX[pa], CX[pb]) + 1).map(x => z * N + x)))
+  let PRECT = pa < 0 || pb < 0 ? [] : tool == 1 || tool == 8 ? (HFIRST ? [[min(CX[pa], CX[pb]), CZ[pa], max(CX[pa], CX[pb]), CZ[pa]], [CX[pb], min(CZ[pa], CZ[pb]), CX[pb], max(CZ[pa], CZ[pb])]]
+      : [[CX[pa], min(CZ[pa], CZ[pb]), CX[pa], max(CZ[pa], CZ[pb])], [min(CX[pa], CX[pb]), CZ[pb], max(CX[pa], CX[pb]), CZ[pb]]])
+    : [[min(CX[pa], CX[pb]), min(CZ[pa], CZ[pb]), max(CX[pa], CX[pb]), max(CZ[pa], CZ[pb])]]
+  let PV = PCELLS.filter(c => OWNED[c] && (tool == 8 ? GG[c] != 7 && SUBL[c] == 0 : tool == 1 ? (GG[c] == 0 || GG[c] == 5 || GG[c] == 6 || (GG[c] >= 2 && GG[c] <= 4 && LV[c] == 0))
+    : tool <= 4 ? (GG[c] == 0 || GG[c] == 5 || (GG[c] >= 2 && GG[c] <= 4 && GG[c] != tool && LV[c] == 0))
+    : c != HC && GG[c] != 0 && GG[c] != 6 && GG[c] != 7))
+  // a tunnel tool dragged only over tunnels fills them in
+  let PFILL = tool == 8 && len(PV) == 0 ? PCELLS.filter(c => SUBL[c] == 1) : []
+  let PCOST = sum(PV.map(c => tool == 8 ? (GG[c] == 6 ? 80 : 40) : tool == 1 ? (GG[c] == 6 ? 60 : 10) + (GG[c] == 5 ? 3 : 0) : tool <= 4 ? 5 + (GG[c] == 5 ? 3 : 0) : GG[c] >= 10 ? 0 : 5))
+
+  // ---- the tile looked at ---------------------------------------------------------------------------------------
+  let SK = sel >= 0 ? GG[sel] : -1
+  let SL = sel >= 0 ? LV[sel] : 0
+  let SNAME = sel >= 0 && !OWNED[sel] && TER[sel] != 6 ? "Land for sale" : SK == 2 ? ["Home lot", "House", "Townhouses", "Apartments"][SL] : SK == 3 ? ["Shop lot", "Corner Shop", "Offices", "Skyscraper"][SL] : SK == 4 ? ["Industry lot", "Workshop", "Factory", "Plant"][SL] : SK == 0 ? ["Grass", "Meadow", "Grass", "Grass"][mapk] : SK >= 0 ? TNAME[SK] : ""
+  let SNEED = sel < 0 || SK < 2 || SK > 4 ? "" : !conn[sel] ? "Needs a road out to the highway" : !pw[sel] ? (SL > 0 ? "Dark: not enough power right now" : "Needs power to grow") : SL >= 3 ? "Fully grown!"
+    : SL >= 1 && !wt[sel] && !(SK == 4 && CL < 3) ? "Needs water to grow"
+    : SL >= CAP[sel] ? (SK == 2 ? (SL == 1 ? (CL < 2 ? "Grows at city level 2" : "Wants land value 2: parks, sea views, services") : CL < 4 ? "Grows at city level 4" : SVC[sel] < 2.6 ? "Wants police, fire, a clinic and a school closer" : "Wants land value 3.5: parks, plazas, sea views")
+      : SK == 3 ? (SL == 1 ? (CL < 2 ? "Grows at city level 2" : "Wants land value 1.5") : CL < 5 ? "Grows at city level 5" : SVC[sel] < 1.8 ? "Wants services closer: police, fire, clinic, school" : "Wants land value 3")
+      : (SL == 1 ? "Grows at city level 3" : CL < 5 ? "Grows at city level 5" : "Needs a research lab within 6 tiles to become a plant"))
+    : [[DR, DC, DI][SK - 2]].map(d => d > 0 ? "Growing: there's demand" : "Waiting for demand")[0]
+  let SINFO = sel < 0 ? [] : !OWNED[sel] && TER[sel] != 6 ? [BUYABLE[PAR[sel]] ? "This parcel of the island is for sale" : "Buy the land beside your city first", "${count(range(NN), c => PAR[c] == PAR[sel] && TER[c] != 6)} tiles of land"] : SK >= 2 && SK <= 4 ? [
+      SK == 2 ? "${CAPR[SL]} residents" : "${SK == 3 ? CAPC[SL] : CAPI[SL]} jobs",
+      "Power ${pw[sel] ? "on" : "off"} · Water ${wt[sel] ? "on" : "off"} · Road ${conn[sel] ? "yes" : "no"}",
+      "Land value ${fixed(LVAL[sel], 1)}${POLL[sel] ? " · smoggy" : ""}${NEARW[sel] ? " · sea view" : ""}",
+      join(range(4).map(t => ["Police", "Fire", "Clinic", "School"][t] + " " + (COVD[sel][t] < 0 ? "none" : "${2 + round(COVD[sel][t] * 0.7)} min")), " · "),
+      "Traffic ${TRWORD[sel]}" + (BUSC[sel] ? " · buses" : "") + (SUBC[sel] ? " · subway" : ""),
+      SNEED]
+    : SK == 17 ? ["Makes ${round(40 * SEFF)} power in full sun", HAS[8] ? "Space solar keeps a quarter of it going under clouds" : "A tenth under clouds: batteries carry the city", "Upkeep $12 /min"]
+    : SK == 21 ? ["Stores ${fmtNum(BONE)} power for cloudy spells", "All batteries ${round(BPCT * 100)}% full", "Upkeep $9 /min"]
+    : SK == 22 ? ["Researches new technology", "Factories within 6 tiles can grow into plants", "${len(tech)} of ${len(TECH)} researched · upkeep $60 /min"]
+    : SK == 23 ? ["Sends satellites up for paying customers", LREADY ? "A rocket stands ready: $${fmtNum(LCOST)} fuel, pays $${fmtNum(LREW)}" : "Next rocket ready in ${lastL + 180 - (now ?? 0)}s", "Upkeep $120 /min"]
+    : SK == 11 ? ["Pumps ${round(60 * (HAS[2] ? 1.5 : 1))} water for the city", "Upkeep $18 /min"]
+    : SK == 12 ? ["Raises land value 3 tiles around", "Makes nearby homes happier"]
+    : SK >= 13 && SK <= 16 ? ["Reaches the whole island: quickest within 3 tiles, slower further out", "Tall buildings want all four services close by", "Upkeep $${fmtNum(TUP[SK] * 60)} /min"]
+    : SK == 18 ? ["Raises land value 4 tiles around", "Shops and homes love it"]
+    : SK == 19 ? ["Makes the whole city happier", "Upkeep $72 /min"]
+    : SK == 20 ? ["The city's landmark: land value up everywhere", "Upkeep $90 /min"]
+    : SK == 1 ? (any(BSTOPS, c => c == sel) ? ["Bus stop: traffic eases by a third 3 tiles round", "Traffic ${TRWORD[sel]}", "Upkeep $2 /min"] : [reach[sel] ? "Reaches the highway" : "Doesn't reach the highway yet", "Traffic ${TRWORD[sel]}" + (SUBL[sel] == 1 ? " · a subway tunnel runs under it" : "")])
+    : SK == 24 ? ["Runs the buses that stop at bus stops", "${len(BSTOPS)} bus stop${len(BSTOPS) == 1 ? "" : "s"} in the city", "Upkeep $30 /min"]
+    : SK == 25 ? [KC[24] > 0 ? "Buses stop here: traffic eases by a third 3 tiles round" : "Needs a bus depot to run buses", "Upkeep $2 /min"]
+    : SK == 26 ? [any(STON, s => s == sel) ? "Linked: traffic eases by 60% 4 tiles round" : "Dig a tunnel to another station to open it", "Upkeep $36 /min"]
+    : SK == 6 ? ["Roads can bridge it ($60 a tile)"] : SK == 5 ? ["Clearing costs $5"] : SK == 7 ? ["Nothing can be built on the beach"] : ["Free to build on"]
+
+  // ---- the look -------------------------------------------------------------------------------------------------
+  let FONT = "https://raw.githubusercontent.com/google/fonts/main/ofl/lilitaone/LilitaOne-Regular.ttf"
+  let SBUILD = "https://actions.google.com/sounds/v1/cartoon/wood_plank_flicks.ogg"
+  let SCHIME = "https://actions.google.com/sounds/v1/cartoon/magic_chime.ogg"
+  let INK = #22304d
+  let INK2 = #141d33
+  let CRM = #fff6e3
+  let CRM2 = #d9c9a6
+  let SUN = #ffc84a
+  let SUN2 = #c98f16
+  let TEAL = #2fd0b4
+  let CORAL = #ff6b57
+  let MUT = #9fb0d0
+
+  // ---- the clock: settle the cash, grow the city -------------------------------------------------------------
+  when now != null && since == 0 { since = now }
+  // back after a while: the city grew a little while away (the cash was earning all along, up to an hour)
+  when now != null && since > 0 && !boot && len(g) == NN {
+    boot = true
+    let away = now - since
+    if away > 60 {
+      let earned = floor(RATE * min(away, 3600))
+      let up = shuffle(CND[0] + CND[1] + CND[2]).take(min(30, floor(away / 20)))
+      lv = reduce(up, (L, c) => set(L, c, L[c] + 1), lv)
+      msg = earned > 0 ? "WELCOME BACK! +$${fmtNum(earned)}" : "WELCOME BACK, MAYOR!"
+      msgT = now
+    }
+  }
+  // Like other city builders: a drag pans, a tap places one tile, and a press held still for a moment (a buzz says
+  // so) starts painting from that tile, so the city can always be moved around with a tool out.
+  every frame {
+    if gm == 1 && tool >= 1 && tool <= 9 && downC >= 0 && time - downT > 0.32 && time >= downT {
+      gm = 3
+      pa = downC
+      pb = downC
+      haptic()
+    }
+    // Lots that grew join the buildings' scene again once they're up. (Not on the frame after they grew: a scene
+    // that changes three frames running is drawn afresh every frame for a while.)
+    if len(fresh) > 0 && (time > fresh[0].t + 0.8 || time < fresh[0].t - 5) {
+      fresh = []
+    }
+  }
+  // research done, and a satellite's customer paying, even if the app was closed meanwhile
+  at rEnd {
+    if rk >= 0 {
+      tech = tech + [rk]
+      msg = "RESEARCH DONE: ${upper(TECH[rk].n)}"
+      msgT = now ?? 0
+      if snd { sound(SCHIME) }
+    }
+    rk = -1
+    rEnd = 0
+  }
+  at payAt {
+    bank = bank + rw
+    msg = "SATELLITE IN ORBIT! +$${fmtNum(rw)}"
+    msgT = now ?? 0
+    payAt = 0
+    if snd { sound(SCHIME) }
+  }
+  every 2s {
+    if now != null && len(g) == NN {
+      // the batteries take what the sun makes over what the city uses, and give the difference under clouds
+      batt = clamp(batt + (SOLNOW - PUSE) * clamp(now - since, 0, 10), 0, BCAP)
+      bank = coins
+      since = now
+      if POP > best { best = POP }
+      let up = shuffle(CND[0]).take(DR > 0.05 ? ceil(DR * 1.2) : 0) + shuffle(CND[1]).take(DC > 0.05 ? ceil(DC * 1.0) : 0) + shuffle(CND[2]).take(DI > 0.05 ? ceil(DI * 1.0) : 0)
+      let dn = shuffle(DECL).take(1)
+      if len(up) + len(dn) > 0 {
+        lv = reduce(dn, (L, c) => set(L, c, L[c] - 1), reduce(up, (L, c) => set(L, c, L[c] + 1), lv))
+        pops = pops.filter(p => time - p.t < 1.6 && time >= p.t).take(5) + up.filter(c => GG[c] == 2).take(3).map(c => {c: c, s: "+${CAPR[LV[c]] - CAPR[LV[c] - 1]}", t: time, col: #ffffff, y: BHT[0][LV[c]] + 0.15})
+      }
+      fresh = up.map(c => {c: c, t: time})
+      if CL > seen {
+        bank = bank + 75 * CL
+        msg = "LEVEL ${CL}: ${upper(LVN[CL - 1])}! +$${fmtNum(75 * CL)}"
+        msgT = now
+        seen = CL
+        if snd { sound(SCHIME) }
+      }
+    }
+  }
+
+  Box {
+    fill: true
+    background: #3f9fd8
+
+    // ---- the world ----
+    Canvas {
+      fill: true
+      scene(CAM, light: LIGHT, ambient: 0.9, fog: #b9e4f5) {
+        model(PLN, at: [0, -0.34, 0], scale: 340, color: #3f9fd8)
+      }
+      scene(CAM, light: LIGHT, ambient: 0.62) {
+        model(GROUND, at: [0, 0, 0])
+      }
+      scene(CAM, light: LIGHT, ambient: 0.62) {
+        for m in DECKS { model(m, at: [0, 0, 0]) }
+      }
+      scene(CAM, light: LIGHT, ambient: 0.75) {
+        for m in DECALS { model(m, at: [0, 0, 0]) }
+        for r in PRECT {
+          model(PLN, at: [(r[0] + r[2] + 1) / 2 - 11, 0.04, (r[1] + r[3] + 1) / 2 - 11], scale: [r[2] - r[0] + 1, 1, r[3] - r[1] + 1], color: alpha(tool == 9 ? CORAL : TCOL[tool], 0.5), ambient: 1)
+        }
+        if sel >= 0 && (SK == 26 || (SK == 1 && any(BSTOPS, c => c == sel))) && EOV < 0 {
+          model(DISC, at: [WX[sel], 0.03, WZ[sel]], scale: [SK == 1 ? 3.5 : 4.5, 1, SK == 1 ? 3.5 : 4.5], color: alpha(SK == 1 ? #f2b134 : #3d7fd0, 0.26), ambient: 1)
+        }
+        if sel >= 0 && !OWNED[sel] && TER[sel] != 6 {
+          let q = PAR[sel]
+          model(PLN, at: [PMID[q % NPX] - 11, 0.04, PMID[floor(q / NPX)] - 11], scale: [PSIZ[q % NPX], 1, PSIZ[floor(q / NPX)]], color: alpha(BUYABLE[q] ? SUN : #ffffff, 0.3), ambient: 1)
+        }
+        if sel >= 0 && SK == 22 && EOV < 0 {
+          model(DISC, at: [WX[sel], 0.03, WZ[sel]], scale: [6, 1, 6], color: alpha(#9b7be0, 0.26), ambient: 1)
+        }
+        if sel >= 0 && SK >= 13 && SK <= 16 && EOV < 0 {
+          for ring in [[13, 0.14], [8, 0.2], [3, 0.32]] {
+            model(DISC, at: [WX[sel], 0.03, WZ[sel]], scale: [ring[0], 1, ring[0]], color: alpha([#2f6fe3, #e4574a, #ff6fa0, #f2a33a][SK - 13], ring[1]), ambient: 1)
+          }
+        }
+      }
+      // What moves goes in scenes of its own, so the launcher keeps the buildings' scene drawn as it is until the city
+      // or the view changes. Cars and boats go under the buildings: they keep to the middle of their road or deep
+      // water, so nothing beside them ever overlaps them on screen.
+      scene(CAM, light: LIGHT, ambient: 0.6) {
+        if sel >= 0 {
+          for e in [[0, -0.47, 1, 0.06], [0, 0.47, 1, 0.06], [-0.47, 0, 0.06, 1], [0.47, 0, 0.06, 1]] {
+            model(PLN, at: [WX[sel] + e[0], 0.05, WZ[sel] + e[1]], scale: [e[2], 1, e[3]], color: alpha(SUN, 0.75 + 0.25 * sin(time * 6)), ambient: 1)
+          }
+        }
+        for R, k in CRP.take(NCAR) {
+          let L = len(R)
+          if L >= 2 {
+            let u = (time * 1.25 + k * 5.3) % (2 * L - 2)
+            let fw = u < L - 1
+            let s = fw ? u : 2 * L - 2 - u
+            let i = min(floor(s), L - 2)
+            let f = s - i
+            let dx = (R[i + 1][0] - R[i][0]) * (fw ? 1 : -1)
+            let dz = (R[i + 1][2] - R[i][2]) * (fw ? 1 : -1)
+            model(MS[KC[24] > 0 && len(BSTOPS) > 0 && k % 4 == 1 ? 58 : 37 + k % 5], at: [lerp(R[i][0], R[i + 1][0], f) - dz * 0.15, lerp(R[i][1], R[i + 1][1], f), lerp(R[i][2], R[i + 1][2], f) + dx * 0.15], turn: [0, deg(atan2(dx, dz)), 0])
+          }
+        }
+        for R, k in BOATS {
+          let L = len(R)
+          if L >= 2 {
+            let u = (time * 0.32 + k * 7.1) % (2 * L - 2)
+            let fw = u < L - 1
+            let s = fw ? u : 2 * L - 2 - u
+            let i = min(floor(s), L - 2)
+            let f = s - i
+            model(MS[42], at: [lerp(R[i][0], R[i + 1][0], f), -0.3 + 0.015 * sin(time * 2 + k), lerp(R[i][2], R[i + 1][2], f)], turn: [0, deg(atan2((R[i + 1][0] - R[i][0]) * (fw ? 1 : -1), (R[i + 1][2] - R[i][2]) * (fw ? 1 : -1))), 0])
+          }
+        }
+      }
+      // the buildings: nothing here reads the clock
+      scene(CAM, light: LIGHT, ambient: 0.6) {
+        for o in OBJ { model(o.m, at: o.at, turn: o.t) }
+        // a rocket stands ready on its pad (one in the air is drawn below)
+        if LREADY {
+          for c in PADS { model(MS[54], at: [WX[c], 0.06, WZ[c]]) }
+        }
+        for c in SALE {
+          model(MS[59], at: [WX[c], 0, WZ[c]], turn: [0, yaw, 0], scale: 1.6)
+        }
+        for c in BSTOPS {
+          if SROT[c] >= 0 {
+            model(MS[56], at: [WX[c], TER[c] == 6 ? 0.05 : 0, WZ[c]], turn: [0, SROT[c], 0])
+          }
+        }
+      }
+      // over them: lots rising out of the ground with a little bounce (and the lots round them), the rocket lifting
+      // off, smoke from the chimneys
+      scene(CAM, light: LIGHT, ambient: 0.6) {
+        for f in FRL {
+          let a = time >= f.t ? clamp((time - f.t) / 0.7, 0, 1) : 1
+          model(MS[f.m], at: f.at, turn: [0, f.r, 0], scale: [1, max(0.05, (1 - pow(1 - a, 3)) * (1 + 0.18 * sin(a * pi))), 1])
+        }
+        for o in FNB { model(o.m, at: o.at, turn: o.t) }
+        for c in PADS {
+          let fa = c == lc && time >= lt && time - lt < 14 ? time - lt : -1
+          if fa >= 0 {
+            let ry = fa < 1.6 ? 0 : 0.7 * pow(fa - 1.6, 2)
+            model(MS[54], at: [WX[c], 0.06 + ry, WZ[c]])
+            model(PUFF, at: [WX[c], ry, WZ[c]], scale: [0.16 + 0.04 * sin(time * 40), 0.3, 0.16], color: #ffb43a, ambient: 1)
+            for j in range(5) {
+              let ph = (fa * 0.7 + j / 5) % 1
+              model(PUFF, at: [WX[c] + cos(j * 1.3) * ph * 0.7, 0.08 + ph * 0.25, WZ[c] + sin(j * 1.3) * ph * 0.7], scale: 0.1 + ph * 0.35, color: alpha(#eeeeee, 0.9 - ph * 0.8), ambient: 0.95)
+            }
+          }
+        }
+        for S in STK {
+          for j in range(3) {
+            let ph = (time * 0.3 + j / 3 + S[3]) % 1
+            model(PUFF, at: [S[0] + ph * 0.3, S[1] + 0.05 + ph * 0.8, S[2] - ph * 0.12], scale: 0.08 + 0.2 * sin(ph * pi), color: alpha(#f2f2f2, 0.9 - ph * 0.7), ambient: 0.95)
+          }
+        }
+      }
+      // the subway view: the tunnels over the city, as if seen through it
+      if EOV == 6 {
+        scene(CAM, light: LIGHT, ambient: 1) {
+          for m in SUBM { model(m, at: [0, 0, 0], color: #2f6fe3, ambient: 1) }
+        }
+      }
+      scene(CAM, light: LIGHT, ambient: 0.95) {
+        for j in range(3) {
+          let a = time * 0.015 + j * 1.57
+          model(MS[43], at: [cos(a) * (19 + j), 4.5 + j * 0.4, sin(a) * (19 + j)], turn: [0, -deg(a), 0], scale: 1.3 + j * 0.25)
+        }
+      }
+
+      // ---- clouds overhead: the light dims, just a little ----
+      if DIMV > 0.002 {
+        rect(0, 0, width, height, fill: alpha(#4a5568, DIMV))
+      }
+
+      // ---- numbers floating up from what grew or was collected ----
+      for q in pops {
+        let a = time - q.t
+        if a >= 0 && a < 1.4 {
+          let p = project([WX[q.c], q.y + a * 0.5, WZ[q.c]], CAM, width, height)
+          if p != null {
+            text(q.s, p.x + 1, p.y + 1, size: 16, font: FONT, align: center, color: #00000066)
+            text(q.s, p.x, p.y, size: 16, font: FONT, align: center, color: q.col)
+          }
+        }
+      }
+
+      // One finger pans, or paints with a road, zone or bulldozer tool out; two pinch and turn; a tap acts.
+      onTouch: {
+        let T = touches
+        if len(T) == 0 {
+          if gm == 1 && len(fingers) > 0 {
+            let sx = fingers[0].startX
+            let sy = fingers[0].startY
+            let hp = [[(2 * sx / SW - 1) * TH * SW / SH, (1 - 2 * sy / SH) * TH]].map(q => [FW[0] + RT[0] * q[0] + UPV[0] * q[1], FW[1] + RT[1] * q[0] + UPV[1] * q[1], FW[2] + RT[2] * q[0] + UPV[2] * q[1]]).map(d => [EYE[0] - d[0] * EYE[1] / d[1], EYE[2] - d[2] * EYE[1] / d[1]])[0]
+            let hx = floor(hp[0] + 11)
+            let hz = floor(hp[1] + 11)
+            let cell = hx >= 0 && hx < N && hz >= 0 && hz < N ? hz * N + hx : -1
+            if cell < 0 {
+              sel = -1
+            } else if tool >= 10 {
+              if !OWNED[cell] {
+                msg = "BUY THIS LAND FIRST: TAP IT WITH NO TOOL"
+                msgT = now
+              } else if CL < TLV[tool] {
+                msg = "UNLOCKS AT CITY LEVEL ${TLV[tool]}"
+                msgT = now
+              } else if tool == 25 {
+                if KC[24] == 0 {
+                  msg = "BUILD A BUS DEPOT FIRST"
+                  msgT = now
+                } else if GG[cell] != 1 {
+                  msg = "BUS STOPS GO ON A ROAD"
+                  msgT = now
+                } else if any(BSTOPS, c => c == cell) {
+                  stops = BSTOPS.filter(c => c != cell)
+                  msg = "BUS STOP REMOVED"
+                  msgT = now
+                } else if SROT[cell] < 0 {
+                  msg = "NO SIDEWALK HERE: PICK A STRAIGHT ROAD OR A CORNER"
+                  msgT = now
+                } else if coins < TCOST[25] {
+                  msg = "NOT ENOUGH MONEY"
+                  msgT = now
+                } else {
+                  bank = coins - TCOST[25]
+                  since = tnow
+                  stops = BSTOPS + [cell]
+                  haptic()
+                  if snd { sound(SBUILD) }
+                }
+              } else if tool == 24 && KC[24] >= 1 {
+                msg = "ONE DEPOT RUNS ALL THE BUSES"
+                msgT = now
+              } else if tool == 23 && !HAS[6] {
+                msg = "RESEARCH ROCKETRY FIRST"
+                msgT = now
+              } else if !(GG[cell] == 0 || GG[cell] == 5 || (GG[cell] >= 2 && GG[cell] <= 4 && LV[cell] == 0)) {
+                msg = "PICK AN EMPTY TILE"
+                msgT = now
+              } else if coins < TCOST[tool] {
+                msg = "NOT ENOUGH MONEY"
+                msgT = now
+              } else {
+                bank = coins - TCOST[tool]
+                since = tnow
+                g = set(g, cell, tool)
+                lv = set(lv, cell, 0)
+                fresh = [{c: cell, t: time}]
+                haptic()
+                if snd { sound(SBUILD) }
+              }
+            } else if tool >= 1 {
+              pa = cell
+              pb = cell
+            } else {
+              sel = sel == cell ? -1 : cell
+              cat = -1
+            }
+          }
+          if pa >= 0 && pb >= 0 && tool >= 1 && tool <= 9 {
+            if len(PFILL) > 0 {
+              let fill = PFILL
+              sub = reduce(fill, (U, c) => set(U, c, 0), SUBL)
+              msg = "TUNNEL FILLED IN"
+              msgT = now
+            } else if len(PV) == 0 {
+              msg = any(PCELLS, c => !OWNED[c]) ? "BUY THIS LAND FIRST: TAP IT WITH NO TOOL" : tool == 9 ? "NOTHING TO CLEAR THERE" : "CAN'T BUILD THERE"
+              msgT = now
+            } else if coins < PCOST {
+              msg = "NOT ENOUGH MONEY"
+              msgT = now
+            } else {
+              let done = PV
+              bank = coins - PCOST
+              since = tnow
+              if tool == 8 {
+                sub = reduce(done, (U, c) => set(U, c, 1), SUBL)
+              } else {
+                g = reduce(done, (G, c) => set(G, c, tool == 9 ? (TER[c] == 6 ? 6 : 0) : tool), g)
+                lv = reduce(done, (L, c) => set(L, c, 0), lv)
+              }
+              if any(done, c => c == sel) { sel = -1 }
+              haptic()
+              if snd { sound(SBUILD) }
+            }
+          }
+          gm = 0
+          pa = -1
+          pb = -1
+        } else if len(T) == 1 {
+          let t = T[0]
+          if gm == 0 {
+            gm = 1
+            downT = time
+            let hp = [[(2 * t.x / SW - 1) * TH * SW / SH, (1 - 2 * t.y / SH) * TH]].map(q => [FW[0] + RT[0] * q[0] + UPV[0] * q[1], FW[1] + RT[1] * q[0] + UPV[1] * q[1], FW[2] + RT[2] * q[0] + UPV[2] * q[1]]).map(d => [EYE[0] - d[0] * EYE[1] / d[1], EYE[2] - d[2] * EYE[1] / d[1]])[0]
+            let hx = floor(hp[0] + 11)
+            let hz = floor(hp[1] + 11)
+            downC = hx >= 0 && hx < N && hz >= 0 && hz < N ? hz * N + hx : -1
+          }
+          // moved before the hold: it's a pan, whatever tool is out
+          if gm == 1 && abs(t.x - t.startX) + abs(t.y - t.startY) > 16 {
+            gm = 2
+          }
+          if gm == 2 && len(fingers) == 1 && fingers[0].id == t.id {
+            let w0 = [[(2 * (fingers[0].x) / SW - 1) * TH * SW / SH, (1 - 2 * (fingers[0].y) / SH) * TH]].map(q => [FW[0] + RT[0] * q[0] + UPV[0] * q[1], FW[1] + RT[1] * q[0] + UPV[1] * q[1], FW[2] + RT[2] * q[0] + UPV[2] * q[1]]).map(d => [EYE[0] - d[0] * EYE[1] / d[1], EYE[2] - d[2] * EYE[1] / d[1]])[0]
+            let w1 = [[(2 * (t.x) / SW - 1) * TH * SW / SH, (1 - 2 * (t.y) / SH) * TH]].map(q => [FW[0] + RT[0] * q[0] + UPV[0] * q[1], FW[1] + RT[1] * q[0] + UPV[1] * q[1], FW[2] + RT[2] * q[0] + UPV[2] * q[1]]).map(d => [EYE[0] - d[0] * EYE[1] / d[1], EYE[2] - d[2] * EYE[1] / d[1]])[0]
+            tx = clamp(tx + w0[0] - w1[0], -12, 12)
+            tz = clamp(tz + w0[1] - w1[1], -12, 12)
+          }
+          if gm == 3 {
+            let hp = [[(2 * t.x / SW - 1) * TH * SW / SH, (1 - 2 * t.y / SH) * TH]].map(q => [FW[0] + RT[0] * q[0] + UPV[0] * q[1], FW[1] + RT[1] * q[0] + UPV[1] * q[1], FW[2] + RT[2] * q[0] + UPV[2] * q[1]]).map(d => [EYE[0] - d[0] * EYE[1] / d[1], EYE[2] - d[2] * EYE[1] / d[1]])[0]
+            pb = clamp(floor(hp[1] + 11), 0, N - 1) * N + clamp(floor(hp[0] + 11), 0, N - 1)
+          }
+        } else {
+          if gm == 3 {
+            pa = -1
+            pb = -1
+          }
+          gm = 4
+          if len(fingers) >= 2 {
+            let a = T[0]
+            let b = T[1]
+            let a0 = first(fingers.filter(f => f.id == a.id))
+            let b0 = first(fingers.filter(f => f.id == b.id))
+            if a0 != null && b0 != null {
+              let d1 = sqrt(pow(a.x - b.x, 2) + pow(a.y - b.y, 2))
+              let d0 = sqrt(pow(a0.x - b0.x, 2) + pow(a0.y - b0.y, 2))
+              let w0 = [[(2 * ((a0.x + b0.x) / 2) / SW - 1) * TH * SW / SH, (1 - 2 * ((a0.y + b0.y) / 2) / SH) * TH]].map(q => [FW[0] + RT[0] * q[0] + UPV[0] * q[1], FW[1] + RT[1] * q[0] + UPV[1] * q[1], FW[2] + RT[2] * q[0] + UPV[2] * q[1]]).map(d => [EYE[0] - d[0] * EYE[1] / d[1], EYE[2] - d[2] * EYE[1] / d[1]])[0]
+              zoom = clamp(zoom * d0 / max(1, d1), 8, 48)
+              yaw = yaw + ((deg(atan2(b.y - a.y, b.x - a.x) - atan2(b0.y - a0.y, b0.x - a0.x)) + 540) % 360 - 180)
+              let w1 = [[(2 * ((a.x + b.x) / 2) / SW - 1) * TH * SW / SH, (1 - 2 * ((a.y + b.y) / 2) / SH) * TH]].map(q => [FW[0] + RT[0] * q[0] + UPV[0] * q[1], FW[1] + RT[1] * q[0] + UPV[1] * q[1], FW[2] + RT[2] * q[0] + UPV[2] * q[1]]).map(d => [EYE[0] - d[0] * EYE[1] / d[1], EYE[2] - d[2] * EYE[1] / d[1]])[0]
+              tx = clamp(tx + w0[0] - w1[0], -12, 12)
+              tz = clamp(tz + w0[1] - w1[1], -12, 12)
+            }
+          }
+        }
+        fingers = T
+      }
+    }
+
+    // ---- warnings over lots: they move only with the view, so this Canvas reads no time ----
+    Canvas {
+      fill: true
+      for w in WARN {
+        let p = project([WX[w[0]], 0.62, WZ[w[0]]], CAM, width, height)
+        if p != null {
+          // a badge in the color of what's missing, ringed in white: a no-entry bar (no road), a bolt (no power),
+          // a drop (no water)
+          circle(p.x, p.y + 2.5, 13, fill: #00000044)
+          circle(p.x, p.y, 13, fill: #ffffff)
+          circle(p.x, p.y, 10.5, fill: [CORAL, #ffc21a, #2f8fe8][w[1]])
+          if w[1] == 0 {
+            rect(p.x - 6.5, p.y - 2.2, 13, 4.4, fill: #ffffff)
+          } else if w[1] == 1 {
+            path([[p.x + 2, p.y - 8], [p.x - 5, p.y + 1], [p.x - 0.5, p.y + 1], [p.x - 2, p.y + 8], [p.x + 5, p.y - 1], [p.x + 0.5, p.y - 1]], closed: true, fill: INK)
+          } else {
+            circle(p.x, p.y + 2, 4.6, fill: #ffffff)
+            path([[p.x, p.y - 7.5], [p.x - 4.3, p.y + 0.6], [p.x + 4.3, p.y + 0.6]], closed: true, fill: #ffffff)
+          }
+        }
+      }
+    }
+
+    // ---- along the top: level, cash, people, happiness; the quest and the demand ----
+    Column {
+      fill: width
+      gap: 8
+      padding: [10, TOP, 10, 0]
+      Row {
+        fill: width
+        gap: 6
+        Column {
+          gap: 0
+          padding: [0, 0, 0, 4]
+          background: INK2
+          onTap: {
+            sel = sel == -2 ? -1 : -2
+            tool = 0
+            cat = -1
+          }
+          Column {
+            gap: 4
+            width: 128
+            height: 48
+            justify: center
+            padding: [10, 0]
+            background: INK
+            Text { text: "LV ${CL} ${upper(LVN[CL - 1])}"; font: FONT; fontSize: 12; color: SUN; maxLines: 1 }
+            Box {
+              width: 96
+              height: 6
+              background: #3a4870
+              Spacer { width: 96 * XPF; height: 6; background: SUN }
+            }
+          }
+        }
+        Column {
+          gap: 0
+          weight: 1
+          Column {
+            gap: 1
+            height: 48
+            justify: center
+            padding: [10, 0]
+            fill: width
+            background: INK
+            Text { text: HMON; font: FONT; fontSize: 18; color: coins < 0 ? CORAL : CRM; maxLines: 1 }
+            Text { text: HRATE; font: FONT; fontSize: 10; color: RATE * 60 > -0.5 ? TEAL : CORAL; maxLines: 1 }
+          }
+          Spacer { fill: width; height: 4; background: INK2 }
+        }
+        Column {
+          gap: 0
+          padding: [0, 0, 0, 4]
+          background: INK2
+          Column {
+            gap: 1
+            width: 84
+            height: 48
+            justify: center
+            padding: [10, 0]
+            background: INK
+            Text { text: HPOP; font: FONT; fontSize: 18; color: CRM; maxLines: 1 }
+            Text { text: "RESIDENTS"; font: FONT; fontSize: 9; color: MUT }
+          }
+        }
+        Column {
+          gap: 0
+          padding: [0, 0, 0, 4]
+          background: INK2
+          onTap: {
+            sel = sel == -2 ? -1 : -2
+            tool = 0
+            cat = -1
+          }
+          Column {
+            gap: 1
+            width: 66
+            height: 48
+            justify: center
+            padding: [10, 0]
+            background: INK
+            Text { text: "${APR}%"; font: FONT; fontSize: 18; color: APR >= 70 ? TEAL : APR >= 45 ? SUN : CORAL; maxLines: 1 }
+            Text { text: "HAPPY"; font: FONT; fontSize: 9; color: MUT }
+          }
+        }
+      }
+      Row {
+        fill: width
+        gap: 6
+        align: top
+        if Q != null {
+          Column {
+            gap: 0
+            weight: 1
+            onTap: {
+              if QOK {
+                bank = coins + Q.r
+                since = tnow
+                msg = "QUEST DONE! +$${fmtNum(Q.r)}"
+                msgT = now
+                qi = qi + 1
+                haptic()
+                if snd { sound(SCHIME) }
+              }
+            }
+            Row {
+              fill: width
+              gap: 8
+              height: 52
+              align: center
+              padding: [10, 0]
+              background: QOK ? SUN : CRM
+              Text { text: "★"; font: FONT; fontSize: 16; color: QOK ? INK : SUN2 }
+              Column {
+                gap: 0
+                weight: 1
+                Text { text: QOK ? "DONE! TAP FOR +$${fmtNum(Q.r)}" : "QUEST ${qi + 1} · ${fmtNum(min(QV, Q.g))}/${fmtNum(Q.g)}"; font: FONT; fontSize: 10; color: QOK ? INK : SUN2; maxLines: 1 }
+                Text { text: Q.t; font: FONT; fontSize: 13; color: INK; maxLines: 2 }
+              }
+            }
+            Spacer { fill: width; height: 4; background: QOK ? SUN2 : CRM2 }
+          }
+        } else {
+          Spacer { weight: 1; height: 1 }
+        }
+        Column {
+          gap: 0
+          padding: [0, 0, 0, 4]
+          background: INK2
+          onTap: {
+            ov = ov >= 0 ? -1 : 0
+            sel = -1
+          }
+          // the map views: a little heat map
+          Canvas {
+            width: 50
+            height: 52
+            rect(0, 0, 50, 52, fill: ov >= 0 ? SUN : INK)
+            rect(13, 8, 11, 11, fill: #4cc76a)
+            rect(26, 8, 11, 11, fill: #f2c43a)
+            rect(13, 21, 11, 11, fill: #f2c43a)
+            rect(26, 21, 11, 11, fill: #e4574a)
+            text("MAP", 25, 42, size: 10, font: FONT, align: center, color: ov >= 0 ? INK : MUT)
+          }
+        }
+        Column {
+          gap: 0
+          padding: [0, 0, 0, 4]
+          background: INK2
+          onTap: {
+            sel = sel == -7 ? -1 : -7
+            tool = 0
+            cat = -1
+          }
+          // the sun (behind a cloud while it's clouding over, or just a cloud) and how full the batteries are
+          Canvas {
+            width: 50
+            height: 52
+            rect(0, 0, 50, 52, fill: INK)
+            if WX0 == 0 {
+              for t in range(8) {
+                rotate(t * 45, 25, 17) { rect(24, 5, 2, 4, fill: SUN) }
+              }
+              circle(25, 17, 6.5, fill: SUN)
+            } else if WX0 == 1 {
+              for t in range(8) {
+                rotate(t * 45, 20, 14) { rect(19, 4, 2, 3, fill: SUN) }
+              }
+              circle(20, 14, 5.5, fill: SUN)
+              circle(24, 21, 4.5, fill: CRM)
+              circle(30, 18, 6, fill: CRM)
+              circle(35, 21.5, 4, fill: CRM)
+              rect(24, 21, 11, 4.5, fill: CRM)
+            } else {
+              circle(18, 20, 5, fill: MUT)
+              circle(25, 16, 7, fill: MUT)
+              circle(32, 20, 5.5, fill: MUT)
+              rect(18, 20, 14, 5.5, fill: MUT)
+            }
+            rect(10.5, 31.5, 27, 11, stroke: DARK > 0 ? CORAL : CRM, width: 1.5)
+            rect(38.5, 34.5, 2.5, 5, fill: DARK > 0 ? CORAL : CRM)
+            rect(12.5, 33.5, 23 * BPCT, 7, fill: BPCT > 0.25 ? TEAL : CORAL)
+          }
+        }
+        Column {
+          gap: 0
+          padding: [0, 0, 0, 4]
+          background: INK2
+          onTap: {
+            sel = sel == -2 || sel == -3 || sel == -4 ? -1 : -2
+            tool = 0
+            cat = -1
+          }
+          // a gear: City Hall, with the taxes, sounds and cities
+          Canvas {
+            width: 50
+            height: 52
+            rect(0, 0, 50, 52, fill: INK)
+            for t in range(8) {
+              rotate(t * 45, 25, 21) { rect(22.5, 10, 5, 5, fill: CRM) }
+            }
+            circle(25, 21, 8, fill: CRM)
+            circle(25, 21, 3.5, fill: INK)
+            text("CITY", 25, 42, size: 10, font: FONT, align: center, color: MUT)
+          }
+        }
+        Column {
+          gap: 0
+          padding: [0, 0, 0, 4]
+          background: INK2
+          onTap: {
+            sel = sel == -5 ? -1 : -5
+            tool = 0
+            cat = -1
+          }
+          Row {
+            gap: 5
+            height: 52
+            align: center
+            padding: [9, 0]
+            background: INK
+            for d, i in [DR, DC, DI] {
+              Column {
+                gap: 2
+                align: center
+                Box {
+                  width: 9
+                  height: 28
+                  align: bottom
+                  background: #3a4870
+                  Spacer { width: 9; height: 28 * max(0.08, (d + 1) / 2); background: d > 0 ? ZCOL[i] : #6b7894 }
+                }
+                Text { text: ["R", "C", "I"][i]; font: FONT; fontSize: 10; color: ZCOL[i] }
+              }
+            }
+          }
+        }
+      }
+    }
+
+    // ---- along the bottom: messages, the tile looked at, the city hall, the tools ----
+    Column {
+      fill: true
+      justify: end
+      gap: 6
+      padding: [10, 0, 10, INS + 10]
+      if msg != "" && (now ?? 0) - msgT < 3 {
+        Row {
+          fill: width
+          justify: center
+          Text { text: msg; font: FONT; fontSize: 15; color: INK; background: SUN; padding: [16, 9]; align: center }
+        }
+      }
+      if gm == 3 && pa >= 0 && pb >= 0 {
+        Row {
+          fill: width
+          justify: center
+          Text { text: "${len(PV)} TILE${len(PV) == 1 ? "" : "S"} · $${fmtNum(PCOST)}"; font: FONT; fontSize: 15; color: coins >= PCOST ? CRM : CORAL; background: INK; padding: [16, 9] }
+        }
+      }
+      if sel >= 0 && tool == 0 {
+        Column {
+          gap: 0
+          fill: width
+          Column {
+            gap: 3
+            fill: width
+            padding: [12, 10]
+            background: CRM
+            Row {
+              fill: width
+              align: center
+              Text { text: upper(SNAME); font: FONT; fontSize: 17; color: INK; weight: 1; maxLines: 1 }
+              if SK >= 2 && SK <= 4 && SL > 0 { Text { text: ["", "★", "★★", "★★★"][SL]; font: FONT; fontSize: 16; color: SUN2 } }
+              Text { text: "✕"; font: FONT; fontSize: 17; color: #8a7a5a; padding: [10, 0, 0, 0]; onTap: sel = -1 }
+            }
+            for line, i in SINFO {
+              Text { text: line; font: FONT; fontSize: 12; color: SK >= 2 && SK <= 4 && i == 5 ? #b0661a : #4a5470; maxLines: 2 }
+            }
+            if SK >= 13 && SK <= 16 {
+              Text { text: "SHOW ${upper(["police", "fire", "clinic", "school"][SK - 13])} ACROSS THE CITY"; font: FONT; fontSize: 13; color: CRM; background: INK; fill: width; align: center; padding: [0, 8]; onTap: {
+                ov = SK - 13
+                sel = -1
+              } }
+            }
+            if sel >= 0 && !OWNED[sel] && TER[sel] != 6 && BUYABLE[PAR[sel]] {
+              Text { text: "BUY THIS LAND · $${fmtNum(LPRICE)}"; font: FONT; fontSize: 14; color: INK; background: SUN; fill: width; align: center; padding: [0, 8]; onTap: {
+                if coins < LPRICE {
+                  msg = "NOT ENOUGH MONEY"
+                  msgT = now
+                } else {
+                  bank = coins - LPRICE
+                  since = tnow
+                  own = set(OWNL, PAR[sel], 1)
+                  sel = -1
+                  msg = "LAND BOUGHT!"
+                  msgT = now
+                  haptic()
+                  if snd { sound(SCHIME) }
+                }
+              } }
+            }
+            if SK == 22 {
+              Text { text: "OPEN RESEARCH"; font: FONT; fontSize: 14; color: CRM; background: #9b7be0; fill: width; align: center; padding: [0, 8]; onTap: sel = -6 }
+            }
+            if SK == 23 {
+              Text { text: LREADY ? "LAUNCH · $${fmtNum(LCOST)}" : "NEXT ROCKET IN ${lastL + 180 - (now ?? 0)}S"; font: FONT; fontSize: 14; color: LREADY ? CRM : #8a7a5a; background: LREADY ? CORAL : #eadfc4; fill: width; align: center; padding: [0, 8]; onTap: {
+                if !LREADY {
+                  msg = "THE NEXT ROCKET ISN'T READY YET"
+                  msgT = now
+                } else if coins < LCOST {
+                  msg = "NOT ENOUGH MONEY FOR FUEL"
+                  msgT = now
+                } else {
+                  bank = coins - LCOST
+                  since = tnow
+                  lastL = now
+                  lc = sel
+                  lt = time
+                  rw = LREW
+                  payAt = now + 9
+                  nl = nl + 1
+                  sel = -1
+                  msg = "3, 2, 1... LIFTOFF!"
+                  msgT = now
+                  haptic()
+                }
+              } }
+            }
+          }
+          Spacer { fill: width; height: 4; background: CRM2 }
+        }
+      }
+      if sel == -2 {
+        Column {
+          gap: 0
+          fill: width
+          Column {
+            gap: 4
+            fill: width
+            padding: [12, 10]
+            background: CRM
+            Row {
+              fill: width
+              align: center
+              Text { text: "CITY HALL"; font: FONT; fontSize: 17; color: INK; weight: 1 }
+              Text { text: "✕"; font: FONT; fontSize: 17; color: #8a7a5a; padding: [10, 0, 0, 0]; onTap: sel = -1 }
+            }
+            Row {
+              fill: width
+              gap: 6
+              align: center
+              Column {
+                gap: 0
+                weight: 1
+                Text { text: upper(MP.n); font: FONT; fontSize: 13; color: INK; maxLines: 1 }
+                Text { text: "${1 + len(saves)} of 4 cities"; font: FONT; fontSize: 10; color: #8a7a5a }
+              }
+              Text { text: "CITIES"; font: FONT; fontSize: 14; color: INK; background: SUN; width: 104; align: center; padding: [0, 5]; onTap: {
+                sel = -3
+                armDel = -1
+              } }
+            }
+            Row {
+              fill: width
+              gap: 6
+              align: center
+              Column {
+                gap: 0
+                weight: 1
+                Text { text: "TECHNOLOGY"; font: FONT; fontSize: 13; color: INK }
+                Text { text: rk >= 0 ? "Researching ${TECH[rk].n}" : "${len(tech)} of ${len(TECH)} researched"; font: FONT; fontSize: 10; color: #8a7a5a; maxLines: 1 }
+              }
+              Text { text: "RESEARCH"; font: FONT; fontSize: 14; color: CRM; background: #9b7be0; width: 104; align: center; padding: [0, 5]; onTap: sel = -6 }
+            }
+            Row {
+              fill: width
+              gap: 6
+              align: center
+              Column {
+                gap: 0
+                weight: 1
+                Text { text: "TAX RATE"; font: FONT; fontSize: 13; color: INK }
+                Text { text: tax > 11 ? "high: people grumble" : tax < 7 ? "low: people move in" : "fair"; font: FONT; fontSize: 10; color: #8a7a5a }
+              }
+              Text { text: "−"; font: FONT; fontSize: 18; color: CRM; background: INK; width: 40; align: center; padding: [0, 5]; onTap: {
+                bank = coins
+                since = tnow
+                tax = max(4, tax - 1)
+              } }
+              Text { text: "${tax}%"; font: FONT; fontSize: 18; color: INK; width: 50; align: center }
+              Text { text: "+"; font: FONT; fontSize: 18; color: CRM; background: INK; width: 40; align: center; padding: [0, 5]; onTap: {
+                bank = coins
+                since = tnow
+                tax = min(16, tax + 1)
+              } }
+            }
+            Row {
+              fill: width
+              align: center
+              Text { text: "SOUNDS"; font: FONT; fontSize: 13; color: INK; weight: 1 }
+              Text { text: snd ? "ON" : "OFF"; font: FONT; fontSize: 14; color: snd ? INK : CRM; background: snd ? TEAL : #8a7a5a; width: 70; align: center; padding: [0, 5]; onTap: snd = !snd }
+            }
+            Text { text: "Taxes +$${fmtNum(INC * 60)} · upkeep -$${fmtNum(UPK * 60)} a minute"; font: FONT; fontSize: 12; color: #4a5470 }
+            Text { text: "Sun ${round(SOLNOW)} for ${round(PUSE)} used · batteries ${round(BPCT * 100)}% · water ${round(WUSE)}/${round(WSUP)}"; font: FONT; fontSize: 12; color: #4a5470 }
+            Text { text: "Jobs ${fmtNum(JOBS)} for ${fmtNum(round(POP * 0.5))} workers"; font: FONT; fontSize: 12; color: #4a5470 }
+            Text { text: CL >= 9 ? "Top level reached!" : "Next level at ${fmtNum(THR[CL])} residents"; font: FONT; fontSize: 12; color: #4a5470 }
+            for a in ADV.take(3) {
+              Text { text: "• " + a; font: FONT; fontSize: 12; color: #b0661a; maxLines: 2 }
+            }
+          }
+          Spacer { fill: width; height: 4; background: CRM2 }
+        }
+      }
+      if sel == -7 {
+        Column {
+          gap: 0
+          fill: width
+          Column {
+            gap: 4
+            fill: width
+            padding: [12, 10]
+            background: CRM
+            Row {
+              fill: width
+              align: center
+              Text { text: "POWER"; font: FONT; fontSize: 17; color: INK; weight: 1 }
+              Text { text: WEATHER; font: FONT; fontSize: 13; color: SUN2; padding: [0, 0, 10, 0] }
+              Text { text: "✕"; font: FONT; fontSize: 17; color: #8a7a5a; onTap: sel = -1 }
+            }
+            Text { text: "Solar makes ${round(SOLNOW)} now (${round(SUNV * 100)}% sun), ${round(SOLCAP)} at noon"; font: FONT; fontSize: 12; color: #4a5470 }
+            Text { text: "The city uses ${round(PUSE)}"; font: FONT; fontSize: 12; color: #4a5470 }
+            Canvas {
+              fill: width
+              height: 12
+              rect(0, 0, width, 12, fill: #eadfc4)
+              rect(0, 0, width * BPCT, 12, fill: BPCT > 0.25 ? TEAL : CORAL)
+            }
+            Text { text: BCAP == 0 ? "No batteries: the city goes dark whenever clouds come" : "Batteries ${fmtNum(round(batt))} of ${fmtNum(BCAP)} · " + (SOLNOW > PUSE ? "charging" : batt > 0 ? "running the city" : "empty"); font: FONT; fontSize: 12; color: #4a5470 }
+            Text { text: "Cloudy spells last over a minute: storing ${fmtNum(round(PUSE * 96))} gets the city through"; font: FONT; fontSize: 11; color: #8a7a5a; maxLines: 2 }
+            if DARK > 0 {
+              Text { text: "${DARK} building${DARK == 1 ? " is" : "s are"} dark: no taxes, no growth"; font: FONT; fontSize: 12; color: CORAL; maxLines: 2 }
+            }
+            Text { text: "RESEARCH BETTER PANELS AND BATTERIES"; font: FONT; fontSize: 13; color: CRM; background: #9b7be0; fill: width; align: center; padding: [0, 7]; onTap: sel = -6 }
+          }
+          Spacer { fill: width; height: 4; background: CRM2 }
+        }
+      }
+      if sel == -6 {
+        Column {
+          gap: 0
+          fill: width
+          Column {
+            gap: 5
+            fill: width
+            padding: [12, 10]
+            background: CRM
+            Row {
+              fill: width
+              align: center
+              Text { text: "RESEARCH LAB"; font: FONT; fontSize: 17; color: INK; weight: 1 }
+              Text { text: "✕"; font: FONT; fontSize: 17; color: #8a7a5a; padding: [10, 0, 0, 0]; onTap: sel = -1 }
+            }
+            if KC[22] == 0 {
+              Text { text: CL < 3 ? "Reach city level 3, then build a lab (Service) to research new technology" : "Build a lab (Service) to research new technology"; font: FONT; fontSize: 12; color: #b0661a; maxLines: 2 }
+            }
+            Column {
+              gap: 4
+              fill: width
+              height: min(330, (screenHeight ?? 800) * 0.42)
+              scroll: true
+              for i, k in TORD {
+                let t = TECH[i]
+                if k == 0 || TECH[TORD[k - 1]].g != t.g {
+                  Text { text: TGROUP[t.g] + " · ${count(range(len(TECH)), j => TECH[j].g == t.g && HAS[j])}/${count(TECH, x => x.g == t.g)}"; font: FONT; fontSize: 11; color: SUN2; padding: [2, 6, 0, 0] }
+                }
+                Row {
+                  fill: width
+                  gap: 8
+                  align: center
+                  padding: [8, 6]
+                  background: HAS[i] ? #e3f3e6 : rk == i ? #efe6fb : #f9efd9
+                  Column {
+                    gap: 0
+                    weight: 1
+                    Text { text: upper(t.n); font: FONT; fontSize: 13; color: INK; maxLines: 1 }
+                    Text { text: t.d; font: FONT; fontSize: 10; color: #8a7a5a; maxLines: 2 }
+                  }
+                  if HAS[i] {
+                    Text { text: "DONE"; font: FONT; fontSize: 12; color: #2f9a5a }
+                  } else if rk == i {
+                    Text { text: "${max(0, rEnd - (now ?? 0))}S"; font: FONT; fontSize: 13; color: #9b7be0 }
+                  } else if CL < t.lv {
+                    Text { text: "LEVEL ${t.lv}"; font: FONT; fontSize: 11; color: #8a7a5a }
+                  } else if t.req >= 0 && !HAS[t.req] {
+                    Text { text: "AFTER ${upper(TECH[t.req].n)}"; font: FONT; fontSize: 9; color: #8a7a5a; width: 72; align: end; maxLines: 2 }
+                  } else {
+                    Text { text: "$${fmtNum(t.c)}\n${t.m} MIN"; font: FONT; fontSize: 11; color: CRM; background: KC[22] > 0 && rk < 0 ? #9b7be0 : #c3b8d8; width: 72; align: center; padding: [0, 4]; onTap: {
+                      if KC[22] == 0 {
+                        msg = "BUILD A LAB FIRST"
+                        msgT = now
+                      } else if rk >= 0 {
+                        msg = "ONE RESEARCH AT A TIME"
+                        msgT = now
+                      } else if coins < t.c {
+                        msg = "NOT ENOUGH MONEY"
+                        msgT = now
+                      } else {
+                        bank = coins - t.c
+                        since = tnow
+                        rk = i
+                        rEnd = now + round(t.m * 60)
+                        msg = "RESEARCHING ${upper(t.n)}"
+                        msgT = now
+                        haptic()
+                      }
+                    } }
+                  }
+                }
+              }
+            }
+          }
+          Spacer { fill: width; height: 4; background: CRM2 }
+        }
+      }
+      if sel == -5 {
+        Column {
+          gap: 0
+          fill: width
+          Column {
+            gap: 5
+            fill: width
+            padding: [12, 10]
+            background: CRM
+            Row {
+              fill: width
+              align: center
+              Text { text: "DEMAND"; font: FONT; fontSize: 17; color: INK; weight: 1 }
+              Text { text: "✕"; font: FONT; fontSize: 17; color: #8a7a5a; padding: [10, 0, 0, 0]; onTap: sel = -1 }
+            }
+            for r, i in RCIL {
+              Column {
+                gap: 3
+                fill: width
+                padding: [0, 4, 0, 4]
+                Row {
+                  fill: width
+                  gap: 8
+                  align: center
+                  Spacer { size: 12; background: ZCOL[i] }
+                  Text { text: r.n; font: FONT; fontSize: 14; color: INK; weight: 1 }
+                  Text { text: DWORD[i]; font: FONT; fontSize: 13; color: r.d > 0.05 ? #2f9a5a : r.d > -0.3 ? #8a7a5a : CORAL }
+                }
+                // the bar runs from too many (left) to wanted (right), from the middle
+                Canvas {
+                  fill: width
+                  height: 10
+                  rect(0, 0, width, 10, fill: #eadfc4)
+                  if r.d > 0 {
+                    rect(width / 2, 0, width / 2 * r.d, 10, fill: ZCOL[i])
+                  } else {
+                    rect(width / 2 + width / 2 * r.d, 0, -width / 2 * r.d, 10, fill: #c0ae8c)
+                  }
+                  rect(width / 2 - 1, 0, 2, 10, fill: INK)
+                }
+                Text { text: r.a; font: FONT; fontSize: 11; color: #4a5470; maxLines: 2 }
+                Text { text: r.b; font: FONT; fontSize: 11; color: #b0661a; maxLines: 2 }
+              }
+            }
+          }
+          Spacer { fill: width; height: 4; background: CRM2 }
+        }
+      }
+      if sel == -3 {
+        Column {
+          gap: 0
+          fill: width
+          Column {
+            gap: 6
+            fill: width
+            padding: [12, 10]
+            background: CRM
+            Row {
+              fill: width
+              align: center
+              Text { text: "YOUR CITIES"; font: FONT; fontSize: 17; color: INK; weight: 1 }
+              Text { text: "✕"; font: FONT; fontSize: 17; color: #8a7a5a; padding: [10, 0, 0, 0]; onTap: sel = -1 }
+            }
+            Row {
+              fill: width
+              gap: 10
+              align: center
+              padding: [10, 8]
+              background: #f3e2bd
+              Spacer { size: 14; background: MP.tc[0]; border: 2; borderColor: INK }
+              Column {
+                gap: 0
+                weight: 1
+                Text { text: upper(MP.n); font: FONT; fontSize: 14; color: INK; maxLines: 1 }
+                Text { text: "LV ${CL} · ${fmtNum(POP)} residents · ${HMON}"; font: FONT; fontSize: 10; color: #8a7a5a; maxLines: 1 }
+              }
+              Text { text: "PLAYING"; font: FONT; fontSize: 11; color: SUN2 }
+            }
+            for sv, i in saves {
+              Row {
+                fill: width
+                gap: 10
+                align: center
+                padding: [10, 8]
+                background: #f9efd9
+                Spacer { size: 14; background: MAPS[sv.m].tc[0]; border: 2; borderColor: INK }
+                Column {
+                  gap: 0
+                  weight: 1
+                  onTap: {
+                    let nx = sv
+                    saves = set(saves, i, {m: mapk, g: g, lv: lv, bank: coins, since: tnow, best: best, seen: seen, qi: qi, tax: tax, yaw: yaw, zoom: zoom, tx: tx, tz: tz, pop: POP, cl: CL, batt: batt, tech: tech, rk: rk, rEnd: rEnd, nl: nl, lastL: lastL, sub: SUBL, stops: BSTOPS, mapv: mapv, own: OWNL})
+                    mapk = nx.m
+                    g = nx.g
+                    lv = nx.lv
+                    bank = nx.bank
+                    since = nx.since
+                    best = nx.best
+                    seen = nx.seen
+                    qi = nx.qi
+                    tax = nx.tax
+                    yaw = nx.yaw
+                    zoom = nx.zoom
+                    tx = nx.tx
+                    tz = nx.tz
+                    batt = nx.batt ?? 0
+                    tech = nx.tech ?? []
+                    rk = nx.rk ?? -1
+                    rEnd = nx.rEnd ?? 0
+                    nl = nx.nl ?? 0
+                    lastL = nx.lastL ?? 0
+                    sub = nx.sub ?? []
+                    stops = nx.stops ?? []
+                    mapv = nx.mapv ?? 0
+                    own = nx.own ?? []
+                    sel = -1
+                    tool = 0
+                    cat = -1
+                    fresh = []
+                    pops = []
+                    armDel = -1
+                    let gain = floor(coins - bank)
+                    msg = gain > 0 ? "${upper(MP.n)} · +$${fmtNum(gain)} WHILE AWAY" : upper(MP.n)
+                    msgT = now
+                  }
+                  Text { text: upper(MAPS[sv.m].n); font: FONT; fontSize: 14; color: INK; maxLines: 1 }
+                  Text { text: "LV ${sv.cl} · ${fmtNum(sv.pop)} residents · TAP TO PLAY"; font: FONT; fontSize: 10; color: #8a7a5a; maxLines: 1 }
+                }
+                Text { text: armDel == i ? "DELETE" : "✕"; font: FONT; fontSize: armDel == i ? 12 : 16; color: armDel == i ? CRM : #8a7a5a; background: armDel == i ? CORAL : alpha(CRM, 0); padding: [10, 6]; onTap: {
+                  if armDel == i {
+                    saves = remove(saves, i)
+                    armDel = -1
+                  } else {
+                    armDel = i
+                  }
+                } }
+              }
+            }
+            if len(saves) < 3 {
+              Column {
+                gap: 0
+                fill: width
+                padding: [0, 0, 0, 4]
+                background: SUN2
+                onTap: sel = -4
+                Text { text: "+ NEW CITY"; font: FONT; fontSize: 15; color: INK; background: SUN; fill: width; align: center; padding: [0, 10] }
+              }
+            } else {
+              Text { text: "Four cities is the most: delete one to start another"; font: FONT; fontSize: 11; color: #b0661a }
+            }
+          }
+          Spacer { fill: width; height: 4; background: CRM2 }
+        }
+      }
+      if sel == -4 {
+        Column {
+          gap: 0
+          fill: width
+          Column {
+            gap: 6
+            fill: width
+            padding: [12, 10]
+            background: CRM
+            Row {
+              fill: width
+              align: center
+              Text { text: "NEW CITY"; font: FONT; fontSize: 17; color: INK; weight: 1 }
+              Text { text: "BACK"; font: FONT; fontSize: 13; color: #8a7a5a; padding: [10, 0, 0, 0]; onTap: sel = -3 }
+            }
+            Text { text: "Pick a place to build. ${upper(MP.n)} is kept and keeps earning."; font: FONT; fontSize: 11; color: #8a7a5a; maxLines: 2 }
+            Text { text: "Easy: more taxes, cheaper upkeep and land. Hard: less cash, dearer upkeep and land, longer cloudy spells."; font: FONT; fontSize: 10; color: #8a7a5a; maxLines: 3 }
+            for pair in [[0, 1], [2, 3]] {
+              Row {
+                fill: width
+                gap: 6
+                for k in pair {
+                  Column {
+                    gap: 0
+                    weight: 1
+                    padding: [0, 0, 0, 4]
+                    background: INK2
+                    onTap: {
+                      if len(saves) >= 3 {
+                        msg = "DELETE A CITY FIRST"
+                        msgT = now
+                      } else {
+                        saves = saves + [{m: mapk, g: g, lv: lv, bank: coins, since: tnow, best: best, seen: seen, qi: qi, tax: tax, yaw: yaw, zoom: zoom, tx: tx, tz: tz, pop: POP, cl: CL, batt: batt, tech: tech, rk: rk, rEnd: rEnd, nl: nl, lastL: lastL, sub: SUBL, stops: BSTOPS, mapv: mapv, own: OWNL}]
+                        mapk = k
+                        mapv = 2
+                        own = []
+                        g = G0S1[k]
+                        lv = range(NN).map(c => 0)
+                        bank = DIFF[MAPS[k].lvl].cash
+                        since = tnow
+                        best = 0
+                        seen = 1
+                        qi = 0
+                        tax = 9
+                        yaw = 35
+                        zoom = 30
+                        tx = -6
+                        tz = 0.5
+                        batt = 0
+                        tech = []
+                        rk = -1
+                        rEnd = 0
+                        nl = 0
+                        lastL = 0
+                        sub = []
+                        stops = []
+                        sel = -1
+                        tool = 0
+                        cat = -1
+                        fresh = []
+                        pops = []
+                            msg = "WELCOME TO ${upper(MAPS[k].n)}!"
+                        msgT = now
+                        haptic()
+                        if snd { sound(SCHIME) }
+                      }
+                    }
+                    Column {
+                      gap: 3
+                      fill: width
+                      padding: [8, 8]
+                      background: INK
+                      // the map from above, the highway coming in on the left
+                      Canvas {
+                        fill: width
+                        height: 74
+                        let cs = min(width, height) / 22
+                        let ox = (width - cs * 22) / 2
+                        rect(ox, 0, cs * 22, cs * 22, fill: MAPS[k].tc[0])
+                        for q in MINI[k] {
+                          rect(ox + q[0] * cs, q[1] * cs, cs + 0.4, cs + 0.4, fill: q[2])
+                        }
+                        rect(0, 11 * cs, ox, cs, fill: #5f6675)
+                      }
+                      Text { text: upper(MAPS[k].n); font: FONT; fontSize: 13; color: CRM; maxLines: 1 }
+                      Text { text: "${DIFF[MAPS[k].lvl].n} · $${fmtNum(DIFF[MAPS[k].lvl].cash)}"; font: FONT; fontSize: 10; color: [TEAL, SUN, CORAL][MAPS[k].lvl]; maxLines: 1 }
+                      Text { text: MAPS[k].d; font: FONT; fontSize: 10; color: MUT; maxLines: 2; minLines: 2 }
+                    }
+                  }
+                }
+              }
+            }
+          }
+          Spacer { fill: width; height: 4; background: CRM2 }
+        }
+      }
+      if EOV >= 0 {
+        Column {
+          gap: 0
+          fill: width
+          padding: [0, 0, 0, 4]
+          background: INK2
+          Column {
+            gap: 6
+            fill: width
+            padding: [10, 8]
+            background: INK
+            Row {
+              fill: width
+              gap: 8
+              align: center
+              Text { text: EOV == 4 ? "LAND VALUE" : EOV == 5 ? "TRAFFIC" : EOV == 6 ? "SUBWAY · TUNNELS AND STATIONS' REACH" : "${upper(["police", "fire", "clinic", "school"][EOV])} · HOW FAST HELP COMES"; font: FONT; fontSize: 12; color: CRM; weight: 1; maxLines: 1 }
+              if (tool < 13 || tool > 16) && tool != 8 && tool < 24 {
+                Text { text: "✕"; font: FONT; fontSize: 15; color: MUT; padding: [8, 0, 0, 0]; onTap: ov = -1 }
+              }
+            }
+            Row {
+              fill: width
+              gap: 8
+              align: center
+              Text { text: EOV == 4 ? "LOW" : EOV == 5 ? "JAMMED" : EOV == 6 ? "UNLINKED" : "SLOW"; font: FONT; fontSize: 10; color: MUT }
+              Canvas {
+                weight: 1
+                height: 8
+                for k in range(20) {
+                  rect(width * k / 20, 0, width / 20 + 0.5, 8, fill: k < 10 ? mix(HOT[0], HOT[1], k / 10) : mix(HOT[1], HOT[2], (k - 10) / 10))
+                }
+              }
+              Text { text: EOV == 4 ? "HIGH" : EOV == 5 ? "FREE" : EOV == 6 ? "LINKED" : "FAST"; font: FONT; fontSize: 10; color: MUT }
+            }
+            if EOV < 4 && len(SVP[EOV]) == 0 {
+              Text { text: "No ${["police station", "fire station", "clinic", "school"][EOV]} yet: the whole city waits"; font: FONT; fontSize: 11; color: CORAL }
+            }
+            if (tool < 13 || tool > 16) && tool != 8 && tool < 24 {
+              Row {
+                fill: width
+                gap: 4
+                for v, i in ["POLICE", "FIRE", "CLINIC", "SCHOOL", "VALUE", "TRAFFIC", "SUBWAY"] {
+                  Text { text: v; font: FONT; fontSize: 10; color: ov == i ? INK : CRM; background: ov == i ? SUN : #33405f; weight: 1; align: center; padding: [0, 6]; onTap: ov = i }
+                }
+              }
+            }
+          }
+        }
+      }
+      if cat >= 0 && cat <= 4 {
+        Row {
+          fill: width
+          gap: 5
+          for id in CITEMS[cat] {
+            Column {
+              gap: 0
+              weight: 1
+              onTap: {
+                if CL < TLV[id] {
+                  msg = "UNLOCKS AT CITY LEVEL ${TLV[id]}"
+                  msgT = now
+                } else if id == 23 && !HAS[6] {
+                  msg = "RESEARCH ROCKETRY AT THE LAB FIRST"
+                  msgT = now
+                } else if id == 25 && KC[24] == 0 {
+                  msg = "BUILD A BUS DEPOT FIRST"
+                  msgT = now
+                } else {
+                  tool = tool == id ? 0 : id
+                  sel = -1
+                  if tool > 0 {
+                    msg = TTIP[tool]
+                    msgT = now
+                  }
+                }
+              }
+              Column {
+                gap: 3
+                fill: width
+                padding: [4, 8]
+                align: center
+                background: tool == id ? SUN : INK
+                Row {
+                  gap: 5
+                  align: center
+                  Spacer { size: 9; background: CL < TLV[id] ? #6b7894 : TCOL[id] }
+                  Text { text: id == 14 ? "FIRE" : upper(TNAME[id]); font: FONT; fontSize: 11; color: tool == id ? INK : (CL < TLV[id] ? MUT : CRM); maxLines: 1 }
+                }
+                Text { text: CL < TLV[id] ? "LEVEL ${TLV[id]}" : id == 23 && !HAS[6] ? "ROCKETRY" : id == 25 && KC[24] == 0 ? "DEPOT FIRST" : id == 24 && KC[24] > 0 ? "BUILT" : TCOSTS[id] + (id < 10 ? " A TILE" : ""); font: FONT; fontSize: 10; align: center; color: tool == id ? INK : (CL < TLV[id] ? MUT : SUN); maxLines: 1 }
+              }
+              Spacer { fill: width; height: 4; background: tool == id ? SUN2 : INK2 }
+            }
+          }
+        }
+      }
+      Row {
+        fill: width
+        gap: 5
+        for c, i in CATS {
+          Column {
+            gap: 0
+            weight: 1
+            onTap: {
+              let open = cat != i
+              cat = open ? i : -1
+              tool = !open ? 0 : i == 0 ? 1 : i == 5 ? 9 : 0
+              sel = -1
+              if tool > 0 {
+                msg = TTIP[tool]
+                msgT = now
+              }
+            }
+            Spacer { fill: width; height: 3; background: CATC[i] }
+            Text { text: c; fill: width; align: center; padding: [0, 11]; font: FONT; fontSize: 12; color: cat == i ? INK : CRM; background: cat == i ? SUN : INK; maxLines: 1 }
+            Spacer { fill: width; height: 5; background: cat == i ? SUN2 : INK2 }
+          }
+        }
+      }
+    }
+  }
+}
