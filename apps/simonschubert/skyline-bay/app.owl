@@ -1,5 +1,5 @@
 app "skyline bay" {
-  meta { owl: 22; description: "A 3D island city builder: lay roads, zone homes, shops and industry, bring power and water, add services and parks, and grow a hamlet into a skyline"; version: "1.1"; license: "MIT"; category: "games" }
+  meta { owl: 22; description: "A 3D island city builder: lay roads, zone homes, shops and industry, bring power and water, add services and parks, and grow a hamlet into a skyline"; version: "1.2"; license: "MIT"; category: "games" }
   // How it works. The island is 22 x 22 tiles, kept in two persisted lists: g (what's on a tile) and lv (how far a
   // zoned lot has grown, 0 to 3). Every 2 seconds a tick settles the cash, and lots with demand for their zone grow a
   // level if what they need is there: a road that reaches the highway, power, water (from level 2), land value
@@ -253,6 +253,8 @@ app "skyline bay" {
   let WCELLS = range(NN).filter(c => TER[c] == 6)
   // (a sweep along each row, then down each column of that, so 10 looks a tile however much water there is)
   let WROW = range(NN).map(c => any(range(5), i => CX[c] + i - 2 >= 0 && CX[c] + i - 2 < N && TER[c + i - 2] == 6))
+  // lots on the beach or the water's edge: their homes grow into beach villas
+  let BEACH = range(NN).map(c => TER[c] != 6 && (TER[c] == 7 || any(NB4[c], n => n >= 0 && (TER[n] == 6 || TER[n] == 7))))
   let NEARW = range(NN).map(c => TER[c] != 6 && any(range(5), i => CZ[c] + i - 2 >= 0 && CZ[c] + i - 2 < N && WROW[c + (i - 2) * N]))
   // the ground's corners: the rim and the sea floor sit low, so the island has beaches all round
   let HT = range(N + 1).map(i => range(N + 1).map(j => (i == 0 || j == 0 || i == N || j == N) && !((mapv == 0 || TER[HC] != 6) && j == 0 && (i == 11 || i == 12)) ? -0.32 : all([[i - 1, j - 1], [i - 1, j], [i, j - 1], [i, j]].filter(q => q[0] >= 0 && q[1] >= 0 && q[0] < N && q[1] < N), q => TER[q[0] * N + q[1]] == 6) ? -0.32 : 0))
@@ -279,7 +281,7 @@ app "skyline bay" {
   // ---- what can be built ------------------------------------------------------------------------------------
   // (10 was the coal power plant, before power went solar)
   let TNAME = ["", "Road", "Homes", "Shops", "Industry", "Woods", "Water", "Beach", "Subway", "Bulldoze", "", "Water Tower", "Park", "Police", "Fire Station", "Clinic", "School", "Solar Farm", "Plaza", "Stadium", "Bay Tower", "Battery", "Lab", "Launch Pad", "Bus Depot", "Bus Stop", "Station"]
-  let TCOST = [0, 10, 5, 5, 5, 0, 0, 0, 40, 5, 0, 1200, 250, 1500, 1500, 2400, 2400, 2500, 1000, 12000, 30000, 1800, 8000, 60000, 5000, 300, 6000]
+  let TCOST = [0, 10, 5, 5, 5, 0, 0, 0, 40, 5, 0, 1200, 250, 1500, 1500, 2400, 2400, 2500, 1000, 12000, 30000, 1800, 4000, 60000, 5000, 300, 6000]
   let TLV = [1, 1, 1, 1, 1, 1, 1, 1, 5, 1, 1, 1, 1, 2, 2, 3, 3, 1, 3, 5, 7, 1, 3, 8, 3, 3, 5]
   let TUP = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0.3, 0.04, 0.55, 0.55, 0.7, 0.7, 0.2, 0.15, 1.5, 2, 0.15, 1, 2, 0.5, 0.04, 0.6]
   let TCOL = [#000000, #5f6675, #5cc96b, #4a9be8, #f2b134, #000000, #000000, #000000, #3d7fd0, #ff6b57, #000000, #5ab0e8, #74c95c, #2f5fb3, #d8453a, #e5413b, #e0855a, #2b4f8e, #e7dfcf, #f4f4f4, #ffc94a, #2fd0b4, #9b7be0, #e4574a, #f2b134, #f2b134, #3d7fd0]
@@ -563,6 +565,7 @@ app "skyline bay" {
   let GL = #8fd0f2
   let GL2 = #5aaee6
   let DOOR = #7a5236
+  let WHT = #fbf8f2
   let LEAF = [#5cb04a, #4fa040, #6cc055]
   let AWN = [#e4574a, #33a37a, #3d7fd0]
   let CARC = [#e4574a, #f2b134, #3d7fd0, #f4f4f4, #33a37a]
@@ -795,6 +798,28 @@ app "skyline bay" {
       {k: 0, x: 0, y: 0.24, z: 0, w: 0.5, h: 0.24, d: 0.04, c: #ffc84a, cs: [#ffc84a, #fff6e3, #ffc84a, #ffc84a, #ffc84a]},
       {k: 0, x: 0, y: 0.31, z: 0.025, w: 0.3, h: 0.04, d: 0.01, c: #e4574a},
       {k: 0, x: 0, y: 0.38, z: 0.025, w: 0.22, h: 0.03, d: 0.01, c: #22304d}]}]
+    // 60-61: homes by the sea, levels 2 and 3: a white villa and a mansion, each with a pool behind and palms
+    + [{p: [
+      {k: 0, x: -0.04, y: 0, z: 0.1, w: 0.62, h: 0.24, d: 0.44, c: WHT, cs: [#e9e4da, GL, WHT, WHT, WHT]},
+      {k: 0, x: 0.1, y: 0.24, z: 0.04, w: 0.36, h: 0.2, d: 0.3, c: WHT, cs: [#e9e4da, GL, WHT, WHT, WHT]},
+      {k: 0, x: 0.1, y: 0.44, z: 0.04, w: 0.44, h: 0.03, d: 0.38, c: #d9d3c7},
+      {k: 0, x: -0.18, y: 0, z: 0.325, w: 0.1, h: 0.17, d: 0.02, c: DOOR},
+      {k: 0, x: -0.06, y: 0, z: -0.3, w: 0.62, h: 0.012, d: 0.3, c: #eadfc6},
+      {k: 0, x: -0.1, y: 0.012, z: -0.3, w: 0.42, h: 0.012, d: 0.18, c: #45bfe6},
+      {k: 3, x: 0.33, y: 0, z: -0.3, r: 0.025, r2: 0.02, h: 0.34, n: 6, c: #a67c52, nt: true},
+      {k: 4, x: 0.33, y: 0.3, z: -0.3, r: 0.17, h: 0.07, n: 7, c: #4fa83f}]},
+      {p: [
+      {k: 0, x: 0, y: 0, z: 0.12, w: 0.8, h: 0.26, d: 0.46, c: WHT, cs: [#e9e4da, GL2, WHT, WHT, WHT]},
+      {k: 0, x: -0.12, y: 0.26, z: 0.08, w: 0.52, h: 0.24, d: 0.36, c: WHT, cs: [#e9e4da, GL2, WHT, WHT, WHT]},
+      {k: 0, x: -0.2, y: 0.5, z: 0.06, w: 0.28, h: 0.18, d: 0.26, c: WHT, cs: [#d9d3c7, GL2, WHT, WHT, WHT]},
+      {k: 0, x: 0.27, y: 0.262, z: 0.12, w: 0.24, h: 0.012, d: 0.44, c: #c9a06a},
+      {k: 0, x: -0.04, y: 0, z: 0.355, w: 0.12, h: 0.18, d: 0.02, c: DOOR},
+      {k: 0, x: 0, y: 0, z: -0.28, w: 0.84, h: 0.012, d: 0.32, c: #eadfc6},
+      {k: 0, x: -0.08, y: 0.012, z: -0.28, w: 0.56, h: 0.012, d: 0.2, c: #45bfe6},
+      {k: 3, x: 0.34, y: 0, z: -0.32, r: 0.025, r2: 0.02, h: 0.4, n: 6, c: #a67c52, nt: true},
+      {k: 4, x: 0.34, y: 0.36, z: -0.32, r: 0.18, h: 0.07, n: 7, c: #4fa83f},
+      {k: 3, x: -0.38, y: 0, z: -0.34, r: 0.022, r2: 0.018, h: 0.3, n: 6, c: #a67c52, nt: true},
+      {k: 4, x: -0.38, y: 0.27, z: -0.34, r: 0.15, h: 0.06, n: 7, c: #5cb04a}]}]
   let MS = DES.map(D => [D.p + flatten((D.st ?? []).map(S => flatten(range(S.f).map(i => [
         {k: 0, x: 0, y: S.y + i * (S.s + S.b), z: 0, w: S.w, h: S.s, d: S.d, c: S.c},
         {k: 0, x: 0, y: S.y + i * (S.s + S.b) + S.s, z: 0, w: S.w - 0.04, h: S.b, d: S.d - 0.04, c: S.g, nt: true}
@@ -845,16 +870,21 @@ app "skyline bay" {
     : MP.tc[(i + j) % 2])[0])[0]))
   let GCOL = range(N).map(i => range(N).map(j => [i * N + j].map(c => OWNED[c] || TER[c] == 6 ? GCOL0[i][j] : mix(GCOL0[i][j], #4d5866, 0.42))[0]))
   let GROUND = terrain(HT, GCOL)
-  // road markings: a kerb where a road ends or runs past, a dashed middle on straight runs, at bridge height on water
+  // road markings: a kerb where a road ends or runs past (and round the inside of a corner, so where roads meet the
+  // kerbs join up), a dashed middle on straight runs, at bridge height on water
   let SIDE = #d2d6dd
   let DASHC = #f6efd8
   // the highway's height: a bridge over the sea when the coast doesn't reach the grid's edge
   let HWY = mapv >= 1 && TER[HC] == 6 ? 0.05 : 0
-  let RDQ = flatten(range(NN).filter(c => GG[c] == 1).map(c => [{nb: [NB4[c][0], NB4[c][1], c == HC ? HC : NB4[c][2], NB4[c][3]].map(n => n >= 0 && GG[n] == 1), x: WX[c], z: WZ[c], y: TER[c] == 6 ? 0.062 : 0.012}].map(R =>
+  let RDQ = flatten(range(NN).filter(c => GG[c] == 1).map(c => [{nb: [NB4[c][0], NB4[c][1], c == HC ? HC : NB4[c][2], NB4[c][3]].map(n => n >= 0 && GG[n] == 1), dg: [[-1, -1], [-1, 1], [1, -1], [1, 1]].map(o => CX[c] + o[1] >= 0 && CX[c] + o[1] < N && CZ[c] + o[0] >= 0 && CZ[c] + o[0] < N && GG[c + o[0] * N + o[1]] == 1), x: WX[c], z: WZ[c], y: TER[c] == 6 ? 0.062 : 0.012}].map(R =>
       (R.nb[0] ? [] : [[R.x - 0.5, R.z - 0.5, R.x + 0.5, R.z - 0.36, SIDE, R.y]])
     + (R.nb[1] ? [] : [[R.x - 0.5, R.z + 0.36, R.x + 0.5, R.z + 0.5, SIDE, R.y]])
     + (R.nb[2] ? [] : [[R.x - 0.5, R.z - 0.5, R.x - 0.36, R.z + 0.5, SIDE, R.y]])
     + (R.nb[3] ? [] : [[R.x + 0.36, R.z - 0.5, R.x + 0.5, R.z + 0.5, SIDE, R.y]])
+    + (R.nb[0] && R.nb[2] && !R.dg[0] ? [[R.x - 0.5, R.z - 0.5, R.x - 0.36, R.z - 0.36, SIDE, R.y]] : [])
+    + (R.nb[0] && R.nb[3] && !R.dg[1] ? [[R.x + 0.36, R.z - 0.5, R.x + 0.5, R.z - 0.36, SIDE, R.y]] : [])
+    + (R.nb[1] && R.nb[2] && !R.dg[2] ? [[R.x - 0.5, R.z + 0.36, R.x - 0.36, R.z + 0.5, SIDE, R.y]] : [])
+    + (R.nb[1] && R.nb[3] && !R.dg[3] ? [[R.x + 0.36, R.z + 0.36, R.x + 0.5, R.z + 0.5, SIDE, R.y]] : [])
     + ((R.nb[2] || R.nb[3]) && !R.nb[0] && !R.nb[1] ? [[R.x - 0.2, R.z - 0.03, R.x + 0.2, R.z + 0.03, DASHC, R.y]] : [])
     + ((R.nb[0] || R.nb[1]) && !R.nb[2] && !R.nb[3] ? [[R.x - 0.03, R.z - 0.2, R.x + 0.03, R.z + 0.2, DASHC, R.y]] : []))[0]))
     + range(15).map(i => [-25.8 + i, 0.47, -25.4 + i, 0.53, DASHC, HWY > 0 ? 0.062 : 0.012]) + [[-26, 0, -11, 0.09, SIDE, HWY > 0 ? 0.062 : 0.012], [-26, 0.91, -11, 1, SIDE, HWY > 0 ? 0.062 : 0.012]]
@@ -873,7 +903,8 @@ app "skyline bay" {
   // ---- what stands on the tiles ----------------------------------------------------------------------------------
   // a building faces its road; trees and lone buildings turn by chance
   let ROT = range(NN).map(c => [NB4[c]].map(q => q[1] >= 0 && GG[q[1]] == 1 ? 0 : q[3] >= 0 && GG[q[3]] == 1 ? 90 : q[0] >= 0 && GG[q[0]] == 1 ? 180 : q[2] >= 0 && GG[q[2]] == 1 ? 270 : floor(hash(c, 2) * 4) * 90)[0])
-  let MIX = range(NN).map(c => [{k: GG[c], l: LV[c], h: hash(c, 8)}].map(q => q.k == 2 && q.l > 0 ? RI[q.l - 1][floor(q.h * len(RI[q.l - 1]))]
+  let MIX = range(NN).map(c => [{k: GG[c], l: LV[c], h: hash(c, 8)}].map(q => q.k == 2 && q.l >= 2 && BEACH[c] ? 58 + q.l
+    : q.k == 2 && q.l > 0 ? RI[q.l - 1][floor(q.h * len(RI[q.l - 1]))]
     : q.k == 3 && q.l > 0 ? CI[q.l - 1][floor(q.h * len(CI[q.l - 1]))]
     : q.k == 4 && q.l > 0 ? II[q.l - 1][floor(q.h * len(II[q.l - 1]))]
     : q.k >= 2 && q.k <= 4 ? 42 + q.k : q.k >= 24 ? 31 + q.k : q.k >= 21 ? 30 + q.k : q.k >= 10 ? 12 + q.k : q.k == 5 ? MP.tree[floor(q.h * 4)] : -1)[0])
@@ -929,7 +960,7 @@ app "skyline bay" {
   // ---- the tile looked at ---------------------------------------------------------------------------------------
   let SK = sel >= 0 ? GG[sel] : -1
   let SL = sel >= 0 ? LV[sel] : 0
-  let SNAME = sel >= 0 && !OWNED[sel] && TER[sel] != 6 ? "Land for sale" : SK == 2 ? ["Home lot", "House", "Townhouses", "Apartments"][SL] : SK == 3 ? ["Shop lot", "Corner Shop", "Offices", "Skyscraper"][SL] : SK == 4 ? ["Industry lot", "Workshop", "Factory", "Plant"][SL] : SK == 0 ? ["Grass", "Meadow", "Grass", "Grass"][mapk] : SK >= 0 ? TNAME[SK] : ""
+  let SNAME = sel >= 0 && !OWNED[sel] && TER[sel] != 6 ? "Land for sale" : SK == 2 ? (SL >= 2 && BEACH[sel] ? ["Beach Villa", "Seaside Mansion"][SL - 2] : ["Home lot", "House", "Townhouses", "Apartments"][SL]) : SK == 3 ? ["Shop lot", "Corner Shop", "Offices", "Skyscraper"][SL] : SK == 4 ? ["Industry lot", "Workshop", "Factory", "Plant"][SL] : SK == 0 ? ["Grass", "Meadow", "Grass", "Grass"][mapk] : SK >= 0 ? TNAME[SK] : ""
   let SNEED = sel < 0 || SK < 2 || SK > 4 ? "" : !conn[sel] ? "Needs a road out to the highway" : !pw[sel] ? (SL > 0 ? "Dark: not enough power right now" : "Needs power to grow") : SL >= 3 ? "Fully grown!"
     : SL >= 1 && !wt[sel] && !(SK == 4 && CL < 3) ? "Needs water to grow"
     : SL >= CAP[sel] ? (SK == 2 ? (SL == 1 ? (CL < 2 ? "Grows at city level 2" : "Wants land value 2: parks, sea views, services") : CL < 4 ? "Grows at city level 4" : SVC[sel] < 2.6 ? "Wants police, fire, a clinic and a school closer" : "Wants land value 3.5: parks, plazas, sea views")
