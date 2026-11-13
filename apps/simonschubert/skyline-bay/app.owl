@@ -1,5 +1,5 @@
 app "skyline bay" {
-  meta { owl: 22; description: "A 3D island city builder: lay roads, zone homes, shops and industry, bring power and water, add services and parks, and grow a hamlet into a skyline"; version: "1.4"; license: "MIT"; category: "games" }
+  meta { owl: 22; description: "A 3D island city builder: lay roads, zone homes, shops and industry, bring power and water, add services and parks, and grow a hamlet into a skyline"; version: "1.5"; license: "MIT"; category: "games" }
   // How it works. The island is 22 x 22 tiles, kept in two persisted lists: g (what's on a tile) and lv (how far a
   // zoned lot has grown, 0 to 3). Every 2 seconds a tick settles the cash, and lots with demand for their zone grow a
   // level if what they need is there: a road that reaches the highway, power, water (from level 2), land value
@@ -138,6 +138,8 @@ app "skyline bay" {
   state rEnd = 0 persist
   // research paid for and waiting its turn: each starts when the one before it is done
   state rq = [] persist
+  // tiles of water filled in to make land
+  state lf = [] persist
   state nl = 0 persist
   state lastL = 0 persist
   state payAt = 0 persist
@@ -230,7 +232,11 @@ app "skyline bay" {
   let TER1C = [mapk].map(k => range(NN).map(c => !ISLC[c] || WETC[c] ? 6 : any(NB4[c], n => n < 0 || !ISLC[n]) ? 7 : 0))[0]
   let HCFC = [mapk].map(k => first(range(N).filter(x => ISLC[11 * N + x])) ?? 4)[0]
   let G01C = [mapk].map(k => range(NN).map(c => CZ[c] == 11 && CX[c] <= HCFC + 1 ? 1 : TER1C[c] != 0 ? TER1C[c] : (sin(CX[c] * 0.55 + 1.3 + k) + cos(CZ[c] * 0.6 + k * 2) * 0.9 + hash(c, 5, k) * 1.2 > MAPS[k].trees && abs(CZ[c] - 11) > 1) ? 5 : 0))[0]
-  let TER = mapv >= 1 ? TER1C : TER0C
+  let TERB = mapv >= 1 ? TER1C : TER0C
+  // land filled in from the water: plain ground from then on
+  let FILL = lf.filter(c => c >= 0 && c < NN)
+  let FILLD = reduce(FILL, (A, c) => set(A, c, true), range(NN).map(c => false))
+  let TER = len(FILL) == 0 ? TERB : range(NN).map(c => FILLD[c] ? 0 : TERB[c])
   let G0 = mapv >= 1 ? G01C : G00C
   // The parcels, numbered row by row: 4 x 4 of 5 or 6 tiles on a big island (PB are their edges), 3 x 3 of 7 or 8
   // before. A city starts with the middle and the highway's side.
@@ -282,28 +288,30 @@ app "skyline bay" {
 
   // ---- what can be built ------------------------------------------------------------------------------------
   // (10 was the coal power plant, before power went solar)
-  let TNAME = ["", "Road", "Homes", "Shops", "Industry", "Woods", "Water", "Beach", "Subway", "Bulldoze", "", "Water Tower", "Park", "Police", "Fire Station", "Clinic", "School", "Solar Farm", "Plaza", "Stadium", "Bay Tower", "Battery", "Lab", "Launch Pad", "Bus Depot", "Bus Stop", "Station"]
+  let TNAME = ["", "Road", "Homes", "Shops", "Industry", "Woods", "Water", "Beach", "Subway", "Bulldoze", "Landfill", "Water Tower", "Park", "Police", "Fire Station", "Clinic", "School", "Solar Farm", "Plaza", "Stadium", "Bay Tower", "Battery", "Lab", "Launch Pad", "Bus Depot", "Bus Stop", "Station"]
   let TCOST = [0, 10, 5, 5, 5, 0, 0, 0, 40, 5, 0, 1200, 250, 1500, 1500, 2400, 2400, 2500, 1000, 12000, 30000, 1800, 4000, 60000, 5000, 300, 6000]
-  let TLV = [1, 1, 1, 1, 1, 1, 1, 1, 5, 1, 1, 1, 1, 2, 2, 3, 3, 1, 3, 5, 7, 1, 3, 8, 3, 3, 5]
+  let TLV = [1, 1, 1, 1, 1, 1, 1, 1, 5, 1, 5, 1, 1, 2, 2, 3, 3, 1, 3, 5, 7, 1, 3, 8, 3, 3, 5]
   let TUP = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0.3, 0.04, 0.55, 0.55, 0.7, 0.7, 0.2, 0.15, 1.5, 2, 0.15, 1, 2, 0.5, 0.04, 0.6]
-  let TCOL = [#000000, #5f6675, #5cc96b, #4a9be8, #f2b134, #000000, #000000, #000000, #3d7fd0, #ff6b57, #000000, #5ab0e8, #74c95c, #2f5fb3, #d8453a, #e5413b, #e0855a, #2b4f8e, #e7dfcf, #f4f4f4, #ffc94a, #2fd0b4, #9b7be0, #e4574a, #f2b134, #f2b134, #3d7fd0]
+  let TCOL = [#000000, #5f6675, #5cc96b, #4a9be8, #f2b134, #000000, #000000, #000000, #3d7fd0, #ff6b57, #c9a06a, #5ab0e8, #74c95c, #2f5fb3, #d8453a, #e5413b, #e0855a, #2b4f8e, #e7dfcf, #f4f4f4, #ffc94a, #2fd0b4, #9b7be0, #e4574a, #f2b134, #f2b134, #3d7fd0]
   let TCOSTS = TCOST.map(v => "$" + fmtNum(v))
+  // landfill: dearer with every tile
+  let FPRICE = round(DF.land * (3000 + 400 * len(FILL)) / 500) * 500
   // what a tool does, said once when it's picked
-  let TTIP = range(27).map(t => t == 1 ? "TAP FOR ONE TILE · HOLD, THEN DRAG FOR A ROAD" : t == 8 ? "HOLD AND DRAG TO DIG TUNNELS · AGAIN OVER ONE TO FILL IT IN" : t == 25 ? "TAP A ROAD FOR A STOP ON ITS SIDEWALK · AGAIN TO REMOVE IT" : t >= 2 && t <= 4 ? "TAP, OR HOLD AND DRAG, TO ZONE ${upper(TNAME[t])}" : t == 9 ? "TAP, OR HOLD AND DRAG, TO CLEAR" : "TAP AN EMPTY TILE TO BUILD")
-  let CATS = ["ROAD", "ZONE", "POWER", "SERVICE", "SPECIAL", "CLEAR"]
+  let TTIP = range(27).map(t => t == 1 ? "TAP FOR ONE TILE · HOLD, THEN DRAG FOR A ROAD" : t == 8 ? "HOLD AND DRAG TO DIG TUNNELS · AGAIN OVER ONE TO FILL IT IN" : t == 25 ? "TAP A ROAD FOR A STOP ON ITS SIDEWALK · AGAIN TO REMOVE IT" : t == 10 ? "TAP WATER BESIDE YOUR LAND TO FILL IT IN" : t >= 2 && t <= 4 ? "TAP, OR HOLD AND DRAG, TO ZONE ${upper(TNAME[t])}" : t == 9 ? "TAP, OR HOLD AND DRAG, TO CLEAR" : "TAP AN EMPTY TILE TO BUILD")
+  let CATS = ["ROAD", "ZONE", "POWER", "SERVICE", "SPECIAL", "LAND"]
   let CATC = [#8b93a3, #5cc96b, #f2b134, #4a9be8, #74c95c, #ff6b57]
-  let CITEMS = [[1, 25, 24, 8, 26], [2, 3, 4], [17, 21, 11], [13, 14, 15, 16, 22], [12, 18, 19, 20, 23], [9]]
+  let CITEMS = [[1, 25, 24, 8, 26], [2, 3, 4], [17, 21, 11], [13, 14, 15, 16, 22], [12, 18, 19, 20, 23], [9, 10]]
   // people a home holds and jobs a shop or a works gives, by level; power and water each uses
-  let CAPR = [0, 10, 35, 110]
-  let CAPC = [0, 6, 20, 60]
-  let CAPI = [0, 10, 25, 50]
-  let USEP = [[0, 1, 2, 4], [0, 1, 3, 5], [0, 2, 4, 6]]
-  let USEW = [[0, 1, 2, 4], [0, 1, 2, 3], [0, 1, 2, 3]]
+  let CAPR = [0, 10, 35, 110, 260]
+  let CAPC = [0, 6, 20, 60, 140]
+  let CAPI = [0, 10, 25, 50, 50]
+  let USEP = [[0, 1, 2, 4, 7], [0, 1, 3, 5, 8], [0, 2, 4, 6, 6]]
+  let USEW = [[0, 1, 2, 4, 6], [0, 1, 2, 3, 5], [0, 1, 2, 3, 3]]
   let THR = [0, 60, 220, 600, 1400, 2800, 5200, 9000, 15000]
   let LVN = ["Hamlet", "Village", "Town", "Big Town", "City", "Big City", "Metropolis", "Megacity", "Capital"]
   let ZCOL = [#5cc96b, #4a9be8, #f2b134]
   // how tall each zone's building is by level, for the numbers rising from them
-  let BHT = [[0, 0.62, 0.66, 1.25], [0, 0.48, 0.82, 2.3], [0, 0.48, 0.58, 0.78]]
+  let BHT = [[0, 0.62, 0.66, 1.25, 2.6], [0, 0.48, 0.82, 2.3, 3.6], [0, 0.48, 0.58, 0.78, 0.78]]
 
   // ---- the city's numbers, worked out again when it changes -------------------------------------------------
   let KC = reduce(GG, (A, k) => set(A, k, A[k] + 1), range(27).map(i => 0))
@@ -428,9 +436,12 @@ app "skyline bay" {
   // industry grows into plants beside the science: a lab within 6 tiles
   let LABS = SPOS.filter(c => GG[c] == 22)
   let NLAB = range(NN).map(c => GG[c] == 4 && any(LABS, s => (CX[s] - CX[c]) * (CX[s] - CX[c]) + (CZ[s] - CZ[c]) * (CZ[s] - CZ[c]) <= 36))
+  // Level 4 (towers, homes and shops only) wants city level 7 and a bus stop or a subway station near; a tower only
+  // comes down again once its land value is well under what it took to rise (its own traffic costs some).
+  let T4OK = range(NN).map(c => CL >= 7 && (BUSC[c] || SUBC[c]))
   let CAPN = range(NN).map(c => [GG[c]].map(k => k < 2 || k > 4 || !conn[c] ? 0
-    : k == 2 ? (wt[c] && LVAL[c] >= 2 && CL >= 2 ? (LVAL[c] >= 3.5 && SVC[c] >= 2.6 && CL >= 4 ? 3 : 2) : 1)
-    : k == 3 ? (wt[c] && LVAL[c] >= 1.5 && CL >= 2 ? (LVAL[c] >= 3 && SVC[c] >= 1.8 && CL >= 5 ? 3 : 2) : 1)
+    : k == 2 ? (wt[c] && LVAL[c] >= 2 && CL >= 2 ? (LVAL[c] >= 3.5 && SVC[c] >= 2.6 && CL >= 4 ? (T4OK[c] && SVC[c] >= 3.2 && LVAL[c] >= (LV[c] >= 4 ? 3.6 : 4.2) ? 4 : 3) : 2) : 1)
+    : k == 3 ? (wt[c] && LVAL[c] >= 1.5 && CL >= 2 ? (LVAL[c] >= 3 && SVC[c] >= 1.8 && CL >= 5 ? (T4OK[c] && SVC[c] >= 2.6 && LVAL[c] >= (LV[c] >= 4 ? 3.4 : 4) ? 4 : 3) : 2) : 1)
     : (wt[c] && CL >= 3 ? (NLAB[c] && CL >= 5 ? 3 : 2) : 1))[0])
   let CAP = range(NN).map(c => pw[c] ? CAPN[c] : 0)
   let CND = range(3).map(z => ZC.filter(c => GG[c] == 2 + z && LV[c] < CAP[c]))
@@ -499,9 +510,12 @@ app "skyline bay" {
     {t: "Research rocketry", s: "rocket", g: 1, r: 1600},
     {t: "Build a launch pad", s: "pad", g: 1, r: 2500},
     {t: "Launch a rocket", s: "launches", g: 1, r: 3250},
-    {t: "Reach 10,000 residents", s: "pop", g: 10000, r: 6500}
+    {t: "Reach 10,000 residents", s: "pop", g: 10000, r: 6500},
+    {t: "Grow a residential tower: transit near", s: "t4", g: 1, r: 5000},
+    {t: "Fill in a tile of the sea (Land)", s: "fill", g: 1, r: 2500},
+    {t: "Reach 15,000 residents", s: "pop", g: 15000, r: 10000}
   ]
-  let ST = {roads: len(RR), homes: KC[2], shops: KC[3], ind: KC[4], power: KC[17], battery: KC[21], lab: KC[22], techs: len(tech), rocket: HAS[6] ? 1 : 0, pad: KC[23], launches: nl, land: NOWN, depot: KC[24], stops: len(BSTOPS), subway: len(STON), water: KC[11], pop: POP, park: KC[12], police: KC[13], fire: KC[14], clinic: KC[15], school: KC[16], solar: KC[17], plaza: KC[18], stadium: KC[19], tower: KC[20], r2: count(ZC, c => GG[c] == 2 && LV[c] >= 2), t3: count(ZC, c => LV[c] == 3), jobs: JOBS}
+  let ST = {roads: len(RR), homes: KC[2], shops: KC[3], ind: KC[4], power: KC[17], battery: KC[21], lab: KC[22], techs: len(tech), rocket: HAS[6] ? 1 : 0, pad: KC[23], launches: nl, land: NOWN, depot: KC[24], stops: len(BSTOPS), subway: len(STON), water: KC[11], pop: POP, park: KC[12], police: KC[13], fire: KC[14], clinic: KC[15], school: KC[16], solar: KC[17], plaza: KC[18], stadium: KC[19], tower: KC[20], r2: count(ZC, c => GG[c] == 2 && LV[c] >= 2), t3: count(ZC, c => LV[c] >= 3), t4: count(ZC, c => GG[c] == 2 && LV[c] == 4), fill: len(FILL), jobs: JOBS}
   let Q = qi < len(QS) ? QS[qi] : null
   let QV = Q == null ? 0 : get(ST, Q.s, 0)
   let QOK = Q != null && QV >= Q.g
@@ -824,24 +838,129 @@ app "skyline bay" {
       {k: 4, x: 0.34, y: 0.36, z: -0.32, r: 0.18, h: 0.07, n: 7, c: #4fa83f},
       {k: 3, x: -0.38, y: 0, z: -0.34, r: 0.022, r2: 0.018, h: 0.3, n: 6, c: #a67c52, nt: true},
       {k: 4, x: -0.38, y: 0.27, z: -0.34, r: 0.15, h: 0.06, n: 7, c: #5cb04a}]}]
-  let MS = DES.map(D => [D.p + flatten((D.st ?? []).map(S => flatten(range(S.f).map(i => [
+    // 62-77: more looks: homes (two cottages, two two-storey, two mid-rises), residential towers (68-69, level 4),
+    // a cafe, a glass mall, a round tower, supertalls (73-74, level 4), silos, a brick works, a plant with a cooling tower
+    + [{p: [
+      {k: 0, x: 0, y: 0, z: -0.04, w: 0.7, h: 0.24, d: 0.46, c: #f3e9d2, nt: true},
+      {k: 2, x: 0, y: 0.24, z: -0.04, w: 0.78, h: 0.18, d: 0.56, c: #8d6a55},
+      {k: 0, x: 0.15, y: 0, z: 0.205, w: 0.11, h: 0.17, d: 0.03, c: DOOR},
+      {k: 0, x: -0.15, y: 0.08, z: 0.2, w: 0.16, h: 0.09, d: 0.02, c: GL},
+      {k: 0, x: 0, y: 0, z: 0.3, w: 0.5, h: 0.02, d: 0.14, c: #c9a06a},
+      {k: 4, x: 0.34, y: 0, z: 0.34, r: 0.07, h: 0.13, n: 6, c: LEAF[1]}]},
+      {p: [
+      {k: 0, x: -0.04, y: 0, z: 0, w: 0.5, h: 0.34, d: 0.42, c: #e8d8c4, nt: true},
+      {k: 1, x: -0.04, y: 0.34, z: 0, w: 0.58, h: 0.2, d: 0.5, c: #5b6b7d, e: #e8d8c4},
+      {k: 0, x: 0.14, y: 0.36, z: -0.1, w: 0.08, h: 0.2, d: 0.08, c: #b5503d},
+      {k: 0, x: -0.12, y: 0, z: 0.215, w: 0.1, h: 0.18, d: 0.03, c: DOOR},
+      {k: 0, x: 0.08, y: 0.12, z: 0.215, w: 0.12, h: 0.1, d: 0.02, c: GL},
+      {k: 0, x: 0.33, y: 0, z: 0.12, w: 0.14, h: 0.16, d: 0.2, c: #a77a52},
+      {k: 4, x: -0.34, y: 0, z: 0.32, r: 0.08, h: 0.15, n: 6, c: LEAF[0]}]},
+      {p: [
+      {k: 0, x: 0.15, y: 0.42, z: 0, w: 0.3, h: 0.03, d: 0.3, c: #74c95c},
+      {k: 0, x: 0, y: 0, z: 0.29, w: 0.12, h: 0.16, d: 0.02, c: DOOR},
+      {k: 0, x: -0.18, y: 0.18, z: 0.32, w: 0.28, h: 0.03, d: 0.08, c: #c9ced6},
+      {k: 4, x: 0.36, y: 0, z: 0.38, r: 0.07, h: 0.13, n: 6, c: LEAF[2]}],
+      st: [{y: 0, f: 2, w: 0.7, d: 0.56, s: 0.06, b: 0.12, c: #f6f1ea, g: GL2}]},
+      {p: [
+      {k: 0, x: -0.25, y: 0, z: 0, w: 0.24, h: 0.42, d: 0.6, c: #f1d9c0, nt: true},
+      {k: 0, x: 0, y: 0, z: 0, w: 0.24, h: 0.42, d: 0.6, c: #dfe7ef, nt: true},
+      {k: 0, x: 0.25, y: 0, z: 0, w: 0.24, h: 0.42, d: 0.6, c: #f3e3b5, nt: true},
+      {k: 1, x: 0, y: 0.42, z: 0, w: 0.8, h: 0.16, d: 0.64, c: #8d6a55, e: #f1d9c0},
+      {k: 0, x: -0.25, y: 0, z: 0.305, w: 0.08, h: 0.16, d: 0.02, c: DOOR},
+      {k: 0, x: 0, y: 0, z: 0.305, w: 0.08, h: 0.16, d: 0.02, c: DOOR},
+      {k: 0, x: 0.25, y: 0, z: 0.305, w: 0.08, h: 0.16, d: 0.02, c: DOOR},
+      {k: 0, x: -0.25, y: 0.25, z: 0.305, w: 0.12, h: 0.08, d: 0.02, c: GL},
+      {k: 0, x: 0, y: 0.25, z: 0.305, w: 0.12, h: 0.08, d: 0.02, c: GL},
+      {k: 0, x: 0.25, y: 0.25, z: 0.305, w: 0.12, h: 0.08, d: 0.02, c: GL}]},
+      {p: [
+      {k: 3, x: 0.18, y: 1.02, z: -0.12, r: 0.09, r2: 0.09, h: 0.14, n: 8, c: #8a6242, t: #6e4e34},
+      {k: 0, x: 0, y: 0.16, z: 0.37, w: 0.26, h: 0.03, d: 0.08, c: #3a3a3a}],
+      st: [{y: 0, f: 5, w: 0.74, d: 0.66, s: 0.07, b: 0.12, c: #c0694e, g: #8fd0f2}]},
+      {p: [
+      {k: 4, x: 0.3, y: 0.63, z: 0.3, r: 0.06, h: 0.12, n: 6, c: LEAF[0]},
+      {k: 4, x: -0.3, y: 0.63, z: 0.3, r: 0.06, h: 0.12, n: 6, c: LEAF[1]}],
+      st: [{y: 0, f: 3, w: 0.76, d: 0.72, s: 0.06, b: 0.13, c: #ece6f3, g: GL2}, {y: 0.63, f: 3, w: 0.5, d: 0.5, s: 0.06, b: 0.13, c: #ece6f3, g: GL2}]},
+      {p: [
+      {k: 0, x: 0, y: 2.29, z: 0, w: 0.4, h: 0.12, d: 0.4, c: #c9ced6},
+      {k: 0, x: 0, y: 2.41, z: 0, w: 0.03, h: 0.3, d: 0.03, c: #c9ced6},
+      {k: 0, x: 0, y: 0.1, z: 0.36, w: 0.3, h: 0.03, d: 0.1, c: #3a3a3a}],
+      st: [{y: 0, f: 6, w: 0.66, d: 0.66, s: 0.07, b: 0.3, c: #eef2f6, g: #5aa7e0}]},
+      {p: [
+      {k: 0, x: -0.19, y: 0, z: 0, w: 0.32, h: 2.0, d: 0.52, c: #4fa3c9, nt: true},
+      {k: 0, x: -0.19, y: 0, z: 0, w: 0.36, h: 0.06, d: 0.56, c: #f4efe6},
+      {k: 0, x: -0.19, y: 0.5, z: 0, w: 0.36, h: 0.06, d: 0.56, c: #f4efe6},
+      {k: 0, x: -0.19, y: 1.0, z: 0, w: 0.36, h: 0.06, d: 0.56, c: #f4efe6},
+      {k: 0, x: -0.19, y: 1.5, z: 0, w: 0.36, h: 0.06, d: 0.56, c: #f4efe6},
+      {k: 0, x: -0.19, y: 2.0, z: 0, w: 0.36, h: 0.06, d: 0.56, c: #f4efe6},
+      {k: 0, x: 0.2, y: 0, z: 0.04, w: 0.3, h: 1.5, d: 0.46, c: #58b6c9, nt: true},
+      {k: 0, x: 0.2, y: 0, z: 0.04, w: 0.34, h: 0.06, d: 0.5, c: #efe3d3},
+      {k: 0, x: 0.2, y: 0.5, z: 0.04, w: 0.34, h: 0.06, d: 0.5, c: #efe3d3},
+      {k: 0, x: 0.2, y: 1.0, z: 0.04, w: 0.34, h: 0.06, d: 0.5, c: #efe3d3},
+      {k: 0, x: 0.2, y: 1.5, z: 0.04, w: 0.34, h: 0.06, d: 0.5, c: #efe3d3},
+      {k: 0, x: 0.005, y: 1.1, z: 0.02, w: 0.08, h: 0.1, d: 0.2, c: GL2},
+      {k: 0, x: -0.19, y: 2.06, z: 0, w: 0.2, h: 0.1, d: 0.2, c: #c9ced6}]},
+      {p: [
+      {k: 0, x: -0.1, y: 0, z: -0.08, w: 0.6, h: 0.3, d: 0.5, c: #f4ede2, cs: [#c9ced6, GL, #f4ede2, #f4ede2, #f4ede2]},
+      {k: 0, x: -0.1, y: 0.22, z: 0.2, w: 0.6, h: 0.04, d: 0.1, c: #e4574a},
+      {k: 0, x: -0.1, y: 0.3, z: 0.15, w: 0.3, h: 0.1, d: 0.03, c: #33a37a, cs: [#33a37a, #ffffff, #33a37a, #33a37a, #33a37a]},
+      {k: 0, x: 0.3, y: 0, z: 0.3, w: 0.02, h: 0.2, d: 0.02, c: #8b97a4},
+      {k: 4, x: 0.3, y: 0.2, z: 0.3, r: 0.13, h: 0.07, n: 8, c: #f2b134},
+      {k: 0, x: 0.3, y: 0, z: -0.04, w: 0.02, h: 0.2, d: 0.02, c: #8b97a4},
+      {k: 4, x: 0.3, y: 0.2, z: -0.04, r: 0.13, h: 0.07, n: 8, c: #3d7fd0}]},
+      {p: [
+      {k: 0, x: 0, y: 0, z: -0.05, w: 0.84, h: 0.36, d: 0.66, c: #dfe5ec, cs: [#b9c0c9, GL2, #dfe5ec, #dfe5ec, #dfe5ec]},
+      {k: 0, x: 0, y: 0, z: 0.29, w: 0.22, h: 0.26, d: 0.04, c: #3d7fd0},
+      {k: 0, x: 0, y: 0.28, z: 0.29, w: 0.5, h: 0.06, d: 0.02, c: #e4574a},
+      {k: 0, x: 0.22, y: 0.36, z: -0.12, w: 0.2, h: 0.08, d: 0.2, c: #aeb6c0},
+      {k: 2, x: -0.2, y: 0.36, z: -0.02, w: 0.3, h: 0.08, d: 0.3, c: GL}]},
+      {p: [
+      {k: 3, x: 0, y: 0, z: 0, r: 0.34, r2: 0.34, h: 0.2, n: 10, c: #c9ced6, nt: true},
+      {k: 3, x: 0, y: 0.2, z: 0, r: 0.3, r2: 0.3, h: 1.6, n: 10, c: #4f9fdc, nt: true},
+      {k: 3, x: 0, y: 0.7, z: 0, r: 0.31, r2: 0.31, h: 0.04, n: 10, c: #e4eaf1, nt: true},
+      {k: 3, x: 0, y: 1.25, z: 0, r: 0.31, r2: 0.31, h: 0.04, n: 10, c: #e4eaf1, nt: true},
+      {k: 3, x: 0, y: 1.8, z: 0, r: 0.32, r2: 0.28, h: 0.1, n: 10, c: #e4eaf1, t: #c9ced6},
+      {k: 4, x: 0, y: 1.9, z: 0, r: 0.06, h: 0.3, n: 6, c: #c9ced6}]},
+      {p: [{k: 0, x: 0, y: 3.61, z: 0, w: 0.03, h: 0.5, d: 0.03, c: #c9ced6}],
+      st: [{y: 0, f: 7, w: 0.7, d: 0.7, s: 0.06, b: 0.34, c: #e4eaf1, g: #3f8fd0}, {y: 2.86, f: 2, w: 0.46, d: 0.46, s: 0.05, b: 0.3, c: #e4eaf1, g: #3f8fd0}]},
+      {p: [{k: 2, x: 0, y: 3.3, z: 0, w: 0.42, h: 0.2, d: 0.4, c: #58c2c0}],
+      st: [{y: 0, f: 4, w: 0.8, d: 0.74, s: 0.05, b: 0.3, c: #eef2f6, g: #58c2c0}, {y: 1.45, f: 3, w: 0.6, d: 0.56, s: 0.05, b: 0.3, c: #eef2f6, g: #58c2c0}, {y: 2.55, f: 2, w: 0.4, d: 0.38, s: 0.05, b: 0.3, c: #eef2f6, g: #58c2c0}]},
+      {p: [
+      {k: 3, x: -0.22, y: 0, z: -0.15, r: 0.14, r2: 0.14, h: 0.5, n: 8, c: #d9dde3, nt: true},
+      {k: 4, x: -0.22, y: 0.5, z: -0.15, r: 0.14, h: 0.08, n: 8, c: #b9c0c9},
+      {k: 3, x: 0.1, y: 0, z: -0.15, r: 0.14, r2: 0.14, h: 0.44, n: 8, c: #d9dde3, nt: true},
+      {k: 4, x: 0.1, y: 0.44, z: -0.15, r: 0.14, h: 0.08, n: 8, c: #b9c0c9},
+      {k: 0, x: 0.05, y: 0, z: 0.22, w: 0.66, h: 0.2, d: 0.3, c: #c9bfae, t: #8f99a5}]},
+      {p: [
+      {k: 0, x: -0.1, y: 0, z: 0, w: 0.6, h: 0.36, d: 0.6, c: #b5634a, t: #7e8b99},
+      {k: 0, x: -0.1, y: 0.18, z: 0.305, w: 0.5, h: 0.08, d: 0.01, c: GL},
+      {k: 0, x: 0.3, y: 0, z: 0.2, w: 0.2, h: 0.22, d: 0.3, c: #8b97a4},
+      {k: 3, x: 0.34, y: 0, z: -0.22, r: 0.06, r2: 0.045, h: 0.58, n: 8, c: #9a4a38, t: #3a3a3a}]},
+      {p: [
+      {k: 3, x: -0.18, y: 0, z: -0.12, r: 0.26, r2: 0.18, h: 0.62, n: 10, c: #dfe3e8, nt: true},
+      {k: 0, x: 0.12, y: 0, z: 0.14, w: 0.44, h: 0.3, d: 0.42, c: #c9bfae, t: #8f99a5},
+      {k: 0, x: 0.12, y: 0.3, z: 0.1, w: 0.2, h: 0.08, d: 0.2, c: #aeb6c0},
+      {k: 3, x: 0.3, y: 0, z: 0.24, r: 0.05, r2: 0.04, h: 0.76, n: 8, c: #e8e8e8, t: #3a3a3a}]}]
+  let MSA = DES.map(D => [D.p + flatten((D.st ?? []).map(S => flatten(range(S.f).map(i => [
         {k: 0, x: 0, y: S.y + i * (S.s + S.b), z: 0, w: S.w, h: S.s, d: S.d, c: S.c},
         {k: 0, x: 0, y: S.y + i * (S.s + S.b) + S.s, z: 0, w: S.w - 0.04, h: S.b, d: S.d - 0.04, c: S.g, nt: true}
       ])) + [{k: 0, x: 0, y: S.y + S.f * (S.s + S.b), z: 0, w: S.w, h: S.s, d: S.d, c: S.c, t: S.t, nt: S.nt}]))]
     // (A box only gets the faces that show: a flat one its top, a thin one its two broad sides, a pole its four
     // sides; every face is triangles the scene works through on each frame the view moves.)
-    .map(P => reduce(P.map(q => q.k == 0 ? [q.h <= 0.03 ? [0] : q.w <= 0.05 && q.d <= 0.05 ? [1, 2, 3, 4] : q.d <= 0.03 ? [1, 2] : q.w <= 0.03 ? [3, 4] : q.nt ? [1, 2, 3, 4] : [0, 1, 2, 3, 4]].map(FI => {p: CORN.map(o => [q.x + o[0] * q.w, q.y + o[1] * q.h, q.z + o[2] * q.d]), f: FI.map(i => BF[i]), c: [q.cs ?? [q.t ?? q.c, q.c, q.c, q.c, q.c]].map(L => FI.map(i => L[i]))[0]})[0]
+    .map(P => [P.map(q => q.k == 0 ? [q.h <= 0.03 ? [0] : q.w <= 0.05 && q.d <= 0.05 ? [1, 2, 3, 4] : q.d <= 0.03 ? [1, 2] : q.w <= 0.03 ? [3, 4] : q.nt ? [1, 2, 3, 4] : [0, 1, 2, 3, 4]].map(FI => {p: CORN.map(o => [q.x + o[0] * q.w, q.y + o[1] * q.h, q.z + o[2] * q.d]), f: FI.map(i => BF[i]), c: [q.cs ?? [q.t ?? q.c, q.c, q.c, q.c, q.c]].map(L => FI.map(i => L[i]))[0]})[0]
       : q.k == 1 ? {p: [[q.x - q.w / 2, q.y, q.z - q.d / 2], [q.x + q.w / 2, q.y, q.z - q.d / 2], [q.x + q.w / 2, q.y, q.z + q.d / 2], [q.x - q.w / 2, q.y, q.z + q.d / 2], [q.x - q.w / 2, q.y + q.h, q.z], [q.x + q.w / 2, q.y + q.h, q.z]], f: [[3, 2, 5, 4], [1, 0, 4, 5], [2, 1, 5], [0, 3, 4]], c: [q.c, q.c, q.e ?? q.c, q.e ?? q.c]}
       : q.k == 2 ? {p: [[q.x - q.w / 2, q.y, q.z - q.d / 2], [q.x + q.w / 2, q.y, q.z - q.d / 2], [q.x + q.w / 2, q.y, q.z + q.d / 2], [q.x - q.w / 2, q.y, q.z + q.d / 2], [q.x, q.y + q.h, q.z]], f: [[3, 2, 4], [1, 0, 4], [2, 1, 4], [0, 3, 4]], c: [q.c, q.c, q.c, q.c]}
       : q.k == 3 ? {p: range(q.n).map(i => [q.x + cos(2 * pi * i / q.n) * q.r, q.y, q.z + sin(2 * pi * i / q.n) * q.r]) + range(q.n).map(i => [q.x + cos(2 * pi * i / q.n) * (q.r2 ?? q.r), q.y + q.h, q.z + sin(2 * pi * i / q.n) * (q.r2 ?? q.r)]),
           f: range(q.n).map(i => [(i + 1) % q.n, i, q.n + i, q.n + (i + 1) % q.n]) + (q.nt ? [] : [reverse(range(q.n)).map(i => q.n + i)]), c: range(q.n).map(i => q.c) + (q.nt ? [] : [q.t ?? q.c])}
       : q.k == 4 ? {p: range(q.n).map(i => [q.x + cos(2 * pi * i / q.n) * q.r, q.y, q.z + sin(2 * pi * i / q.n) * q.r]) + [[q.x, q.y + q.h, q.z]], f: range(q.n).map(i => [(i + 1) % q.n, i, q.n]), c: range(q.n).map(i => q.c)}
-      : {p: [[q.x - q.w / 2, q.y, q.z + q.d / 2], [q.x + q.w / 2, q.y, q.z + q.d / 2], [q.x + q.w / 2, q.y + q.h, q.z - q.d / 2], [q.x - q.w / 2, q.y + q.h, q.z - q.d / 2], [q.x - q.w / 2, q.y, q.z - q.d / 2], [q.x + q.w / 2, q.y, q.z - q.d / 2]], f: [[0, 1, 2, 3], [5, 4, 3, 2], [1, 5, 2], [4, 0, 3]], c: [q.c, q.e, q.e, q.e]}),
-      (A, r) => {p: A.p + r.p, f: A.f + r.f.map(f => f.map(i => i + len(A.p))), c: A.c + r.c}, {p: [], f: [], c: []}))
-    .map(A => mesh(A.p, A.f, A.c))[0])
-  let RI = [[0, 1, 2, 3], [4, 5, 6], [7, 8, 9]]
-  let CI = [[10, 11, 12], [13, 14], [15, 16]]
-  let II = [[17, 18], [19, 20], [21]]
+      : {p: [[q.x - q.w / 2, q.y, q.z + q.d / 2], [q.x + q.w / 2, q.y, q.z + q.d / 2], [q.x + q.w / 2, q.y + q.h, q.z - q.d / 2], [q.x - q.w / 2, q.y + q.h, q.z - q.d / 2], [q.x - q.w / 2, q.y, q.z - q.d / 2], [q.x + q.w / 2, q.y, q.z - q.d / 2]], f: [[0, 1, 2, 3], [5, 4, 3, 2], [1, 5, 2], [4, 0, 3]], c: [q.c, q.e, q.e, q.e]})]
+      // (joined in one pass: each part's corners numbered on from the parts before it)
+      .map(R => [scan(R, (a, r) => a + len(r.p), 0)].map(O => {p: flatten(R.map(r => r.p)), f: flatten(range(len(R)).map(i => R[i].f.map(f => f.map(j => j + O[i] - len(R[i].p))))), c: flatten(R.map(r => r.c))})[0])[0])[0])
+  let MS = MSA.map(A => mesh(A.p, A.f, A.c))
+  // each model's triangles: a scene holds under 60,000, so a big city's buildings are split over several
+  let MTRI = MSA.map(A => sum(A.f.map(f => len(f) - 2)))
+  let RI = [[0, 1, 2, 3, 62, 63], [4, 5, 6, 64, 65], [7, 8, 9, 66, 67], [68, 69]]
+  let CI = [[10, 11, 12, 70], [13, 14, 71], [15, 16, 72], [73, 74]]
+  let II = [[17, 18, 75], [19, 20, 76], [21, 77], [21, 77]]
   let PLN = plane(1)
   let SUBQ = flatten(range(NN).filter(c => SUBL[c] == 1).map(c => [[WX[c] - 0.17, WZ[c] - 0.17, WX[c] + 0.17, WZ[c] + 0.17]]
     + (NB4[c][0] >= 0 && SUBT[NB4[c][0]] ? [[WX[c] - 0.12, WZ[c] - 0.5, WX[c] + 0.12, WZ[c] - 0.17]] : [])
@@ -915,7 +1034,14 @@ app "skyline bay" {
   // where a sign says a parcel can be bought: its land tile nearest its middle
   let SALE = range(NPAR).filter(q => BUYABLE[q]).map(q => first(range(NN).filter(c => PAR[c] == q && TER[c] == 0 && GG[c] != 1).sortBy(c => (CX[c] + 0.5 - PMID[q % NPX]) * (CX[c] + 0.5 - PMID[q % NPX]) + (CZ[c] + 0.5 - PMID[floor(q / NPX)]) * (CZ[c] + 0.5 - PMID[floor(q / NPX)]))) ?? -1).filter(c => c >= 0)
   let FC = fresh.map(f => f.c)
-  let OBJ = range(NN).filter(c => MIX[c] >= 0 && !any(FC, q => q == c)).map(c => {m: MS[MIX[c]], at: [WX[c], 0, WZ[c]], t: [0, ROT[c], 0]})
+  let OBJ = range(NN).filter(c => MIX[c] >= 0 && !any(FC, q => q == c)).map(c => {m: MS[MIX[c]], n: MTRI[MIX[c]], at: [WX[c], 0, WZ[c]], t: [0, ROT[c], 0]})
+  // A scene draws at most 60,000 triangles, so a big city's buildings go into a few scenes, far to near, each drawn
+  // over the one before. Under 52,000 they're one scene, as before, and stay put however the camera moves.
+  let OTOT = sum(OBJ.map(o => o.n))
+  let OGN = OTOT < 52000 ? 1 : ceil(OTOT / 45000)
+  let OBJS = OGN == 1 ? OBJ : OBJ.sortBy(o => -((o.at[0] - EYE[0]) * (tx - EYE[0]) + (o.at[2] - EYE[2]) * (tz - EYE[2])))
+  let OCUM = OGN == 1 ? [] : scan(OBJS, (a, o) => a + o.n, 0)
+  let OBJG = OGN == 1 ? [OBJ] : range(OGN).map(k => range(len(OBJS)).filter(i => floor((OCUM[i] - 1) * OGN / OTOT) == k).map(i => OBJS[i]))
   let FRL = fresh.filter(f => MIX[f.c] >= 0).map(f => {m: MIX[f.c], at: [WX[f.c], 0, WZ[f.c]], r: ROT[f.c], t: f.t})
   // The lots round one that's rising, drawn again with it over the city, so the ones in front still hide it: what
   // rises is drawn in a scene of its own after the buildings, which stay still and cost nothing to draw again.
@@ -964,17 +1090,28 @@ app "skyline bay" {
   // ---- the tile looked at ---------------------------------------------------------------------------------------
   let SK = sel >= 0 ? GG[sel] : -1
   let SL = sel >= 0 ? LV[sel] : 0
-  let SNAME = sel >= 0 && !OWNED[sel] && TER[sel] != 6 ? "Land for sale" : SK == 2 ? (SL >= 2 && BEACH[sel] ? ["Beach Villa", "Seaside Mansion"][SL - 2] : ["Home lot", "House", "Townhouses", "Apartments"][SL]) : SK == 3 ? ["Shop lot", "Corner Shop", "Offices", "Skyscraper"][SL] : SK == 4 ? ["Industry lot", "Workshop", "Factory", "Plant"][SL] : SK == 0 ? ["Grass", "Meadow", "Grass", "Grass"][mapk] : SK >= 0 ? TNAME[SK] : ""
-  let SNEED = sel < 0 || SK < 2 || SK > 4 ? "" : !conn[sel] ? "Needs a road out to the highway" : !pw[sel] ? (SL > 0 ? "Dark: not enough power right now" : "Needs power to grow") : SL >= 3 ? "Fully grown!"
-    : SL >= 1 && !wt[sel] && !(SK == 4 && CL < 3) ? "Needs water to grow"
-    : SL >= CAP[sel] ? (SK == 2 ? (SL == 1 ? (CL < 2 ? "Grows at city level 2" : "Wants land value 2: parks, sea views, services") : CL < 4 ? "Grows at city level 4" : SVC[sel] < 2.6 ? "Wants police, fire, a clinic and a school closer" : "Wants land value 3.5: parks, plazas, sea views")
-      : SK == 3 ? (SL == 1 ? (CL < 2 ? "Grows at city level 2" : "Wants land value 1.5") : CL < 5 ? "Grows at city level 5" : SVC[sel] < 1.8 ? "Wants services closer: police, fire, clinic, school" : "Wants land value 3")
-      : (SL == 1 ? "Grows at city level 3" : CL < 5 ? "Grows at city level 5" : "Needs a research lab within 6 tiles to become a plant"))
-    : [[DR, DC, DI][SK - 2]].map(d => d > 0 ? "Growing: there's demand" : "Waiting for demand")[0]
+  // the zones' buildings by level, and how high each zone grows
+  let ZNAME = [["Home lot", "House", "Townhouses", "Apartments", "Residential Tower"], ["Shop lot", "Corner Shop", "Offices", "Skyscraper", "Supertall"], ["Industry lot", "Workshop", "Factory", "Plant", "Plant"]]
+  let ZMAX = [4, 4, 3]
+  let SNAME = sel >= 0 && !OWNED[sel] && TER[sel] != 6 ? "Land for sale" : SK == 2 ? (SL >= 2 && SL <= 3 && BEACH[sel] ? ["Beach Villa", "Seaside Mansion"][SL - 2] : ZNAME[0][SL]) : SK == 3 ? ZNAME[1][SL] : SK == 4 ? ["Industry lot", "Workshop", "Factory", "Plant"][SL] : SK == 0 ? ["Grass", "Meadow", "Grass", "Grass"][mapk] : SK >= 0 ? TNAME[SK] : ""
+  // What a lot needs to grow a level, each [met, what]: so a tap says what's missing, with the numbers.
+  let NREQ = sel < 0 || SK < 2 || SK > 4 || SL < 1 || SL >= ZMAX[SK - 2] ? [] : [[SK - 2, SL + 1]].map(q => [
+      [[2, 4, 7], [2, 5, 7], [3, 5, 5]][q[0]][q[1] - 2]].map(CLN => [[CL >= CLN, "city level ${CLN} (now ${CL})"], [wt[sel], "water"]]
+      + (q[0] == 2 ? [] : [[[[2, 3.5, LV[sel] >= 4 ? 3.6 : 4.2], [1.5, 3, LV[sel] >= 4 ? 3.4 : 4]][q[0]][q[1] - 2]].map(LN => [LVAL[sel] >= LN, "land value ${LN} (now ${fixed(floor(LVAL[sel] * 10 + 0.001) / 10, 1)})"])[0]])
+      + (q[1] >= 3 && q[0] < 2 ? [[[[2.6, 3.2], [1.8, 2.6]][q[0]][q[1] - 3]].map(SN => [SVC[sel] >= SN, "services ${SN} (now ${fixed(floor(SVC[sel] * 10 + 0.001) / 10, 1)}): police, fire, clinic, school closer"])[0]] : [])
+      + (q[1] == 4 ? [[BUSC[sel] || SUBC[sel], "a bus stop or subway station near"]] : [])
+      + (q[0] == 2 && q[1] == 3 ? [[NLAB[sel], "a research lab within 6 tiles"]] : []))[0])[0]
+  let NMISS = NREQ.filter(q => !q[0]).map(q => q[1])
+  let SNEED = sel < 0 || SK < 2 || SK > 4 ? "" : !conn[sel] ? "Needs a road out to the highway" : !pw[sel] ? (SL > 0 ? "Dark: not enough power right now" : "Needs power to grow") : SL >= ZMAX[SK - 2] ? "Fully grown!"
+    : SL == 0 ? [[DR, DC, DI][SK - 2]].map(d => d > 0 ? "Building soon: there's demand" : "Waiting for demand")[0]
+    : len(NMISS) > 0 ? "To grow into ${ZNAME[SK - 2][SL + 1]} it wants " + join(NMISS, ", ")
+    : [[DR, DC, DI][SK - 2]].map(d => d > 0 ? "Ready to grow into ${ZNAME[SK - 2][SL + 1]}: lots take turns, so soon" : "Ready to grow into ${ZNAME[SK - 2][SL + 1]} once there's demand")[0]
+  // what makes up a lot's land value, the parts that count
+  let LVPARTS = sel < 0 || SK < 2 || SK > 4 ? "" : join([[NPARK[sel], "park +1"], [NEARW[sel], "sea view +1"], [NPLZ[sel], "plaza +1"], [KC[20] > 0, "Bay Tower +0.5"], [SVC[sel] > 0, "services +${fixed(SVC[sel] * 0.5, 1)}"], [POLL[sel], "smog −2"], [TRAF[sel] >= 0.05, "traffic −${fixed(TRAF[sel] * 1.5, 1)}"]].filter(q => q[0]).map(q => q[1]), " · ")
   let SINFO = sel < 0 ? [] : !OWNED[sel] && TER[sel] != 6 ? [BUYABLE[PAR[sel]] ? "This parcel of the island is for sale" : "Buy the land beside your city first", "${count(range(NN), c => PAR[c] == PAR[sel] && TER[c] != 6)} tiles of land"] : SK >= 2 && SK <= 4 ? [
       SK == 2 ? "${CAPR[SL]} residents" : "${SK == 3 ? CAPC[SL] : CAPI[SL]} jobs",
       "Power ${pw[sel] ? "on" : "off"} · Water ${wt[sel] ? "on" : "off"} · Road ${conn[sel] ? "yes" : "no"}",
-      "Land value ${fixed(LVAL[sel], 1)}${POLL[sel] ? " · smoggy" : ""}${NEARW[sel] ? " · sea view" : ""}",
+      "Land value ${fixed(floor(LVAL[sel] * 10 + 0.001) / 10, 1)}" + (LVPARTS == "" ? "" : ": 1 + " + LVPARTS),
       join(range(4).map(t => ["Police", "Fire", "Clinic", "School"][t] + " " + (COVD[sel][t] < 0 ? "none" : "${2 + round(COVD[sel][t] * 0.7)} min")), " · "),
       "Traffic ${TRWORD[sel]}" + (BUSC[sel] ? " · buses" : "") + (SUBC[sel] ? " · subway" : ""),
       SNEED]
@@ -1159,8 +1296,12 @@ app "skyline bay" {
         }
       }
       // the buildings: nothing here reads the clock
+      for G, gk in OBJG {
+        scene(CAM, light: LIGHT, ambient: 0.6) {
+          for o in G { model(o.m, at: o.at, turn: o.t) }
+        }
+      }
       scene(CAM, light: LIGHT, ambient: 0.6) {
-        for o in OBJ { model(o.m, at: o.at, turn: o.t) }
         // a rocket stands ready on its pad (one in the air is drawn below)
         if LREADY {
           for c in PADS { model(MS[54], at: [WX[c], 0.06, WZ[c]]) }
@@ -1272,6 +1413,25 @@ app "skyline bay" {
                   bank = coins - TCOST[25]
                   since = tnow
                   stops = BSTOPS + [cell]
+                  haptic()
+                  if snd { sound(SBUILD) }
+                }
+              } else if tool == 10 {
+                if TER[cell] != 6 || GG[cell] != 6 {
+                  msg = "LANDFILL GOES ON OPEN WATER"
+                  msgT = now
+                } else if CX[cell] == 0 || CZ[cell] == 0 || CX[cell] == N - 1 || CZ[cell] == N - 1 || !any(NB4[cell], n => n >= 0 && TER[n] != 6) {
+                  msg = "FILL WATER RIGHT BESIDE THE LAND"
+                  msgT = now
+                } else if coins < FPRICE {
+                  msg = "NOT ENOUGH MONEY"
+                  msgT = now
+                } else {
+                  bank = coins - FPRICE
+                  since = tnow
+                  lf = FILL + [cell]
+                  g = set(g, cell, 0)
+                  lv = set(lv, cell, 0)
                   haptic()
                   if snd { sound(SBUILD) }
                 }
@@ -1680,11 +1840,11 @@ app "skyline bay" {
               fill: width
               align: center
               Text { text: upper(SNAME); font: FONT; fontSize: 17; color: INK; weight: 1; maxLines: 1 }
-              if SK >= 2 && SK <= 4 && SL > 0 { Text { text: ["", "★", "★★", "★★★"][SL]; font: FONT; fontSize: 16; color: SUN2 } }
+              if SK >= 2 && SK <= 4 && SL > 0 { Text { text: ["", "★", "★★", "★★★", "★★★★"][SL]; font: FONT; fontSize: 16; color: SUN2 } }
               Text { text: "✕"; font: FONT; fontSize: 17; color: #8a7a5a; padding: [10, 0, 0, 0]; onTap: sel = -1 }
             }
             for line, i in SINFO {
-              Text { text: line; font: FONT; fontSize: 12; color: SK >= 2 && SK <= 4 && i == 5 ? #b0661a : #4a5470; maxLines: 2 }
+              Text { text: line; font: FONT; fontSize: 12; color: SK >= 2 && SK <= 4 && i == 5 ? #b0661a : #4a5470; maxLines: SK >= 2 && SK <= 4 && i >= 2 ? 3 : 2 }
             }
             if SK >= 13 && SK <= 16 {
               Text { text: "SHOW ${upper(["police", "fire", "clinic", "school"][SK - 13])} ACROSS THE CITY"; font: FONT; fontSize: 13; color: CRM; background: INK; fill: width; align: center; padding: [0, 8]; onTap: {
@@ -2030,7 +2190,7 @@ app "skyline bay" {
                   weight: 1
                   onTap: {
                     let nx = sv
-                    saves = set(saves, i, {m: mapk, g: g, lv: lv, bank: coins, since: tnow, best: best, seen: seen, qi: qi, tax: tax, yaw: yaw, zoom: zoom, tx: tx, tz: tz, pop: POP, cl: CL, batt: batt, tech: tech, rk: rk, rEnd: rEnd, rq: rq, nl: nl, lastL: lastL, wx0: wx0, sub: SUBL, stops: BSTOPS, mapv: mapv, own: OWNL})
+                    saves = set(saves, i, {m: mapk, g: g, lv: lv, bank: coins, since: tnow, best: best, seen: seen, qi: qi, tax: tax, yaw: yaw, zoom: zoom, tx: tx, tz: tz, pop: POP, cl: CL, batt: batt, tech: tech, rk: rk, rEnd: rEnd, rq: rq, lf: FILL, nl: nl, lastL: lastL, wx0: wx0, sub: SUBL, stops: BSTOPS, mapv: mapv, own: OWNL})
                     mapk = nx.m
                     g = nx.g
                     lv = nx.lv
@@ -2049,6 +2209,7 @@ app "skyline bay" {
                     rk = nx.rk ?? -1
                     rEnd = nx.rEnd ?? 0
                     rq = nx.rq ?? []
+                    lf = nx.lf ?? []
                     nl = nx.nl ?? 0
                     lastL = nx.lastL ?? 0
                     wx0 = nx.wx0 ?? 0
@@ -2127,7 +2288,7 @@ app "skyline bay" {
                         msg = "DELETE A CITY FIRST"
                         msgT = now
                       } else {
-                        saves = saves + [{m: mapk, g: g, lv: lv, bank: coins, since: tnow, best: best, seen: seen, qi: qi, tax: tax, yaw: yaw, zoom: zoom, tx: tx, tz: tz, pop: POP, cl: CL, batt: batt, tech: tech, rk: rk, rEnd: rEnd, rq: rq, nl: nl, lastL: lastL, wx0: wx0, sub: SUBL, stops: BSTOPS, mapv: mapv, own: OWNL}]
+                        saves = saves + [{m: mapk, g: g, lv: lv, bank: coins, since: tnow, best: best, seen: seen, qi: qi, tax: tax, yaw: yaw, zoom: zoom, tx: tx, tz: tz, pop: POP, cl: CL, batt: batt, tech: tech, rk: rk, rEnd: rEnd, rq: rq, lf: FILL, nl: nl, lastL: lastL, wx0: wx0, sub: SUBL, stops: BSTOPS, mapv: mapv, own: OWNL}]
                         mapk = k
                         mapv = 2
                         own = []
@@ -2148,6 +2309,7 @@ app "skyline bay" {
                         rk = -1
                         rEnd = 0
                         rq = []
+                        lf = []
                         nl = 0
                         lastL = 0
                         wx0 = 0
@@ -2242,7 +2404,7 @@ app "skyline bay" {
           }
         }
       }
-      if cat >= 0 && cat <= 4 {
+      if cat >= 0 && cat <= 5 {
         Row {
           fill: width
           gap: 5
@@ -2281,7 +2443,7 @@ app "skyline bay" {
                   Spacer { size: 9; background: CL < TLV[id] ? #6b7894 : TCOL[id] }
                   Text { text: id == 14 ? "FIRE" : upper(TNAME[id]); font: FONT; fontSize: 11; color: tool == id ? INK : (CL < TLV[id] ? MUT : CRM); maxLines: 1 }
                 }
-                Text { text: CL < TLV[id] ? "LEVEL ${TLV[id]}" : id == 23 && !HAS[6] ? "ROCKETRY" : id == 25 && KC[24] == 0 ? "DEPOT FIRST" : id == 24 && KC[24] > 0 ? "BUILT" : TCOSTS[id] + (id < 10 ? " A TILE" : ""); font: FONT; fontSize: 10; align: center; color: tool == id ? INK : (CL < TLV[id] ? MUT : SUN); maxLines: 1 }
+                Text { text: CL < TLV[id] ? "LEVEL ${TLV[id]}" : id == 23 && !HAS[6] ? "ROCKETRY" : id == 25 && KC[24] == 0 ? "DEPOT FIRST" : id == 24 && KC[24] > 0 ? "BUILT" : id == 10 ? "$${fmtNum(FPRICE)} A TILE" : TCOSTS[id] + (id < 10 ? " A TILE" : ""); font: FONT; fontSize: 10; align: center; color: tool == id ? INK : (CL < TLV[id] ? MUT : SUN); maxLines: 1 }
               }
               Spacer { fill: width; height: 4; background: tool == id ? SUN2 : INK2 }
             }
