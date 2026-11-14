@@ -21,13 +21,16 @@ widget "capture" {
   source inbox = file("~/inbox.md")
   source now = clock every 1s
 
-  // The words being composed, and the line being edited (-1 for a new one). Both are
-  // persisted, so a half-finished thought survives the launcher being killed.
+  // The words being composed, and the entry being fixed ("" for a new one). Both are
+  // persisted, so a half-finished thought survives the launcher being killed. The entry
+  // is kept as its text, not its line number: a script or agent can add lines while you
+  // type, and a number would then point at someone else's entry.
   state draft = "" persist
-  state editing = -1 persist
+  state editingLine = "" persist
   state savedAt = 0
-  // The entry whose × you have tapped once: it asks again before throwing words away.
-  state confirm = -1
+  // The entry whose × you have tapped once, by its text for the same reason: it asks
+  // again before throwing words away.
+  state confirmLine = ""
 
   // Android hands the words over when it stops listening, and only then: said.text is
   // still filling in while you speak, so taking it early would save half a sentence.
@@ -56,7 +59,7 @@ widget "capture" {
   let sp = " "
 
   // A draft being made, or a saved line being fixed: either way the tile shows the field.
-  let composing = draft != "" || editing >= 0 || said.listening
+  let composing = draft != "" || editingLine != "" || said.listening
 
   Column {
     gap: 6
@@ -64,7 +67,7 @@ widget "capture" {
 
     Row {
       gap: 8
-      Text { text: composing ? (editing >= 0 ? "fixing" : "draft") : "inbox"; style: muted; weight: 1; maxLines: 1 }
+      Text { text: composing ? (editingLine != "" ? "fixing" : "draft") : "inbox"; style: muted; weight: 1; maxLines: 1 }
       Text {
         text: now - savedAt < 3
           ? "saved ✓"
@@ -109,12 +112,12 @@ widget "capture" {
               // Words split over lines in the field are one entry: newlines collapse to spaces.
               let flat = join(words(draft), sp)
               if flat != "" {
-                // The line being edited may be gone if the file changed under us: then it's a new one.
-                let e = editing >= 0 && editing < len(all) ? editing : -1
+                // Find the entry again by its text: if it was changed or deleted meanwhile, this is a new one.
+                let e = editingLine == "" ? -1 : all.indexOf(editingLine)
                 let b = e >= 0 ? set(all, e, "- [ ] " + flat) : all.take(lead) + ["- [ ] " + flat] + all.drop(lead)
                 run("printf '%s\n' ${sh(join(b, nl))} > ~/inbox.md")
                 draft = ""
-                editing = -1
+                editingLine = ""
                 savedAt = now
               }
             }
@@ -123,7 +126,7 @@ widget "capture" {
           Button {
             text: "cancel"
             color: muted
-            onTap: { speech("cancel"); draft = ""; editing = -1 }
+            onTap: { speech("cancel"); draft = ""; editingLine = "" }
           }
         }
       }
@@ -142,7 +145,7 @@ widget "capture" {
               height: 26
               align: center
               onTap: {
-                confirm = -1
+                confirmLine = ""
                 let b = startsWith(all[i], "- [ ]")
                   ? set(all, i, replace(all[i], "- [ ]", "- [x]"))
                   : set(all, i, replace(all[i], "- [x]", "- [ ]"))
@@ -161,28 +164,28 @@ widget "capture" {
               weight: 1
               maxLines: 2
               color: startsWith(all[i], "- [ ]") ? foreground : muted
-              onTap: { confirm = -1; editing = i; draft = sub(all[i], 6, len(all[i])) }
+              onTap: { confirmLine = ""; editingLine = all[i]; draft = sub(all[i], 6, len(all[i])) }
             }
             // Gone from the file altogether, for a thought that turned out not to be one.
             // Tapped once it asks, so a slip of the thumb doesn't lose what you said.
             Box {
-              width: confirm == i ? 52 : 26
+              width: confirmLine == all[i] ? 52 : 26
               height: 26
               align: center
               onTap: {
-                if confirm == i {
+                if confirmLine == all[i] {
                   let b = remove(all, i)
                   run("printf '%s\n' ${sh(join(b, nl))} > ~/inbox.md")
-                  confirm = -1
+                  confirmLine = ""
                 } else {
-                  confirm = i
+                  confirmLine = all[i]
                 }
               }
               Text {
-                text: confirm == i ? "delete?" : "×"
+                text: confirmLine == all[i] ? "delete?" : "×"
                 style: small
-                bold: confirm == i
-                color: confirm == i ? red : muted
+                bold: confirmLine == all[i]
+                color: confirmLine == all[i] ? red : muted
               }
             }
           }
