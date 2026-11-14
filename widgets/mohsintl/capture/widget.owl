@@ -4,7 +4,7 @@ widget "capture" {
 
   meta {
     description: "Dictate or type a thought, fix the words in the tile, save it to ~/inbox.md: a to-do list your terminal can read too. Tap an entry to edit it, its circle to tick it off, its × to delete."
-    version: "2.9"
+    version: "1.0"
     license: "MIT"
     category: "productivity"
     owl: 18
