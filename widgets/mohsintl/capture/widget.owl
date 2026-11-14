@@ -4,7 +4,7 @@ widget "capture" {
 
   meta {
     description: "Dictate or type a thought, fix the words in the tile, save it to ~/inbox.md: a to-do list your terminal can read too. Tap an entry to edit it, its circle to tick it off, its × to delete."
-    version: "2.8"
+    version: "2.9"
     license: "MIT"
     category: "productivity"
     owl: 18
@@ -46,6 +46,9 @@ widget "capture" {
   // Still-to-do first, then what you have ticked: a tick must be something you can see,
   // not a row that vanishes, or it is indistinguishable from deleting.
   let rows = open + done
+  // How many lines at the top are not entries: the file's "# inbox ..." header. A new
+  // entry goes after them, never above, or the header ends up buried in the list.
+  let lead = first(range(len(all)).filter(i => startsWith(all[i], "- ["))) ?? len(all)
   // A real newline: the lines are joined with it and quoted as one shell word, so a
   // line can hold anything — quotes, dashes, a $ or a backtick — and printf gives it
   // a newline of its own.
@@ -108,7 +111,7 @@ widget "capture" {
               if flat != "" {
                 // The line being edited may be gone if the file changed under us: then it's a new one.
                 let e = editing >= 0 && editing < len(all) ? editing : -1
-                let b = e >= 0 ? set(all, e, "- [ ] " + flat) : ["- [ ] " + flat] + all
+                let b = e >= 0 ? set(all, e, "- [ ] " + flat) : all.take(lead) + ["- [ ] " + flat] + all.drop(lead)
                 run("printf '%s\n' ${sh(join(b, nl))} > ~/inbox.md")
                 draft = ""
                 editing = -1
