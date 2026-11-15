@@ -16,7 +16,8 @@ Entries go to `~/inbox.md`, one per line, as a plain markdown list:
 ```
 
 - `Aa` opens an empty field to type a thought instead of speaking it.
-- `○` ticks an entry done (`- [x]`): it stays in the file and in the list, dimmed. Tap `●` to undo.
+- The circle at an entry's left ticks it done (`- [x]`): it fills green with a `✓`, and the
+  entry stays in the file and in the list, dimmed. Tap it again to undo.
 - Tap an entry's words to edit it in the same field; saving rewrites that line.
 - `×` asks first (`delete?`), then removes the line from the file.
 - `×` at the left of the field throws the draft away.
