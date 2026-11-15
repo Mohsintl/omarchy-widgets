@@ -292,7 +292,7 @@ widget "capture" {
           Discard { }
           Field { lines: 3; weight: 1 }
           Save { }
-          Mic { }
+          Box { onTap: speech("toggle")  Mic { } }
         }
       } else {
         // A small one gives the field the tile, with the buttons under it.
